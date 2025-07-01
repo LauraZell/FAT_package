@@ -1,0 +1,227 @@
+---
+title: "Progress-report - Package"
+author: "Laura Zell"
+date: "2025-06-29"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Package-Overview
+
+Package Name: *fatEstimation*
+
+## Core structure
+
+- DESCRIPTION: Complete, includes license (MIT + file LICENSE) and dependencies.
+- NAMESPACE: Populated via roxygen2 using @export, @importFrom, etc.
+- LICENSE: MIT license file included.
+- .Rbuildignore: Contains project files like .Rproj and packagesetup.R.
+- README.Rmd / README.md: Introduced and customized; includes usage with real data.
+- Test data: For now using real empirical data (cannabis_overdose); NEXT STEPS: simulated examples, replication data
+
+## Main functionality
+
+#### 1. *estimate_fat()*
+- takes panel data
+- forecasts counterfactuals
+- computes FAT and standard errors
+- supports 3 SE methods: "analytic", "bootstrap", "clustered"
+
+#### 2. *state_poly_fit()*
+- used internally by *estimate_fat()* to fit unit-specific polynomial pre-trends
+
+#### 3. diagnostic plotting
+- function: *plot_se_diagnostics()*
+- Purpose: Visualize standard errors across SE methods, polynomial degrees, and horizons.
+
+## Tests (testthat)
+- Output structure for all SE methods ("test-estimate_fat.R")
+
+## Data
+- Empirical example: cannabis_overdose
+- Colums: state, Year, ln_age_mort_rate, adopt, adopt_year, timeToTreat
+- The README uses this data already (might have to be changed)
+
+## Vignette
+
+- Introduces the methodology
+- Will walk users through the estimator
+- Should match structure and examples in your README
+
+-> will be completed when the package core functionality and validation are finished
+
+
+## NEXT:
+1. Diagnostics for Standard Errors (In progress — almost done!)
+
+    - You’re testing/visualizing analytic, bootstrap, and clustered SEs.
+    - plot_se_diagnostics() function already built.
+    - could add @examples and more plots if needed.
+
+2. 🧪 Extend Testing
+
+    - Add tests for edge cases (e.g., missing data, degenerate horizons).
+    - Test for correctness of standard errors (within tolerances).
+
+3. 📄 Finish Vignette
+
+        - Now that diagnostics and tests are working, wrap the vignette:
+        Add a minimal reproducible example using cannabis_overdose.
+        Include interpretation of plots.
+        Explain method intuitively.
+
+5. 📈 Optional Enhancements
+
+    Add plot_fat_estimates() for main results visualization (FAT + CIs).
+    Add a helper to compute average pre-trend fit quality or diagnostics.
+
+6. 📝 Submit-Readiness
+
+    Add a NEWS.md file for versioning.
+
+    Validate your package with devtools::check() on multiple platforms (or rcmdcheck).
+
+    Consider whether you want to publish the package on GitHub, CRAN, or just share internally.
+
+
+
+### DIAGNOSTICS
+
+✅ 4. Best practice for future diagnostics
+
+To keep diagnostics clean and reproducible:
+
+    ✅ Create one .R file per diagnostic task in dev/
+
+    ✅ Name them clearly: e.g. se_diagnostic.R, placebo_diagnostic.R, timing_test.R
+
+    ✅ Always start each script with devtools::load_all() and data(...)
+
+    ✅ Use consistent naming (results_...) and concise plots with ggplot2
+
+Would you like help adding this as an RStudio add-in or a simple Makefile task for running all diagnostics?
+
+Would you like help adding a saved version of the plot or organizing this into a diagnostic report template later (e.g. using R Markdown)?
+
+
+Would you like me to prepare a directory-ready list of R/ file names and starter file headers (with @title, etc.)?
+
+Should we make the unitwise forecast exportable?
+At the moment, you might only call fit_unitwise_trend() inside estimate_fat().
+
+But you could also make it available as a user-level function by exporting it via @export. This allows researchers to do:
+
+fit_unitwise_trend(data = df, unit = "Zurich", ...)
+
+This would:
+
+    Give users transparency
+
+    Let them replicate and verify one unit’s forecasts manually
+
+
+### Covariates
+
+#### 1. Pooled OLS (no lags)
+
+- step to run lm() on all pre-treatment data pooled across units. 
+- forecast using x'_{it+h}beta^
+- then unit-specific time trends will be estimated after demeaning for x'beta^
+
+
+#### 2. FD + IV (for lagged outcome)
+
+- 
+
+
+
+Why degree = 0 does not make sense for the heterogeneous case:
+
+📚 Now, for the heterogeneous case (beta_estimator = "unitwise"):
+
+In the paper (Botosaru, Giacomini, Weidner, 2023), section 4.2 considers the case where each unit has its own coefficients — that is:
+yi,τ+1(0)=∑k=0qck(i)(τ+1)k+β(i)xi,τ+1
+yi,τ+1​(0)=k=0∑q​ck(i)​(τ+1)k+β(i)xi,τ+1​
+
+This is equation (25) in the paper.
+
+➡️ That means for each unit i, you're estimating the coefficients of a time polynomial of degree q = degree, plus the unit-specific covariate coefficients β^(i).
+
+To estimate this, the paper assumes a regression model of the form:
+yit=∑k=0qck(i)tk+β(i)xit+ϵit
+yit​=k=0∑q​ck(i)​tk+β(i)xit​+ϵit​
+
+This is essentially a multiple regression with time terms and covariates.
+🚫 Why degree = 0 is problematic here
+
+When degree = 0, this equation becomes:
+yit=c0(i)+β(i)xit+ϵit
+yit​=c0(i)​+β(i)xit​+ϵit​
+
+Which looks fine, but here’s the problem:
+
+    Without variation in time (i.e., no time trend), we cannot forecast future values of the outcome in the presence of time dynamics — which is exactly the motivation for the polynomial trend.
+
+The whole point of the unitwise method is to capture time-varying behavior, as each unit gets its own time polynomial. The paper explicitly builds the forecasting model from past time trends.
+
+So:
+
+    If you estimate only a level (no trend), you’re discarding what makes the unitwise forecasting method useful.
+
+    From a theoretical point of view, this reduces the method to something like a two-way fixed effect, but without actual within-unit dynamics.
+
+The paper assumes q ≥ 1 implicitly for all forecasting models involving trends.
+
+
+
+#### Extension: control group (DFAT)
+Problem:
+In the baseline FAT estimator, the counterfactual outcomes yi,τ+h(0)yi,τ+h​(0) must be forecasted unbiasedly using only pre-treatment data. This requires strong assumptions, especially the absence of unobservable macro shocks after treatment.
+✅ Solution with Control Group:
+
+Let Di=1Di​=1 if unit ii is treated, and Di=0Di​=0 otherwise.
+
+Instead of assuming perfect forecasts, we can allow forecast bias, as long as the bias is the same for treated and control units.
+
+The Differential FAT estimator is:
+DFAT^h=1n1∑i:Di=1(yi,τ+h−y^i,τ+h(0))−1n0∑i:Di=0(yi,τ+h−y^i,τ+h(0))
+DFAT
+h​=n1​1​i:Di​=1∑​(yi,τ+h​−y^​i,τ+h​(0))−n0​1​i:Di​=0∑​(yi,τ+h​−y^​i,τ+h​(0))
+
+This means:
+FAT (treated) − FAT (control) = DFAT.
+
+It removes time effects that impact both groups equally (e.g. common macro shocks).
+💡 2. Intuition in Your Package Context
+
+    Your current package estimates FAT per horizon hh, per degree, and optionally with covariates or IV.
+
+    In the control group extension, you compute two sets of forecasts:
+
+        One for the treated group (as before).
+
+        One for the control group — although not treated, they’re used to compute parallel (counterfactual) forecasts.
+
+    Then you take the difference between the two FATs.
+
+This effectively acts like bias correction using the control group.
+
+✅ Benefits
+
+    Weakens need for unbiased forecasts.
+
+    Handles macro shocks.
+
+    Simple to implement via modularity (reuse all existing trend functions).
+
+#### Suggested implementation:
+
+In estimate_fat(), added "control_group_var = NULL". If specified, treat units with control_group_var == 1 as treated and == 0 as controls.
+
+In helper-function (specify), include sdFAT asjustment as $ sdDFAT sdDFATh​=n1​sdFATtreated2​​+n0​sdFATcontrol2​​
+​
+
+For now, only option treated is included. This could be changed to allow for less strict naming. 

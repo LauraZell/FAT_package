@@ -1,0 +1,27 @@
+Package: fatEstimation
+Title: Forecasted Average Treatment Effect Estimation via Polynomial Regression
+Version: 0.0.0.9000
+Authors@R: 
+    person("Laura", "Zell", email = "laura.zell@stud.unilu.ch", role = c("aut", "cre"))
+Description: Implements the Forecasted Average Treatment (FAT) estimator for policy 
+    evaluation using polynomial regression on pre-treatment outcomes. The package 
+    allows flexible estimation across user-defined degrees and forecast horizons, 
+    with optional bootstrapped standard errors.
+License: MIT + file LICENSE
+Encoding: UTF-8
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 7.3.2
+Imports:
+    dplyr,
+    purrr,
+    tibble,
+    stats,
+    sandwich,
+    lmtest
+Suggests:
+    testthat (>= 3.0.0),
+    ggplot2
+Config/testthat/edition: 3
+Depends: 
+    R (>= 3.5)
+LazyData: true

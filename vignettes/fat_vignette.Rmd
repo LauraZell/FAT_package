@@ -1,0 +1,58 @@
+---
+title: "Forecasted Average Treatment Effects in the Absence of a Control Group"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Forecasted Average Treatment Effects}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+```
+
+# Introduction
+
+This vignette introduces the R package `fatEstimator`, which implements the method developed by Botosaru, Giacomini, and Weidner (2023) to estimate policy effects in the absence of a control group. The estimator relies on forecasting counterfactual outcomes based on short pre-treatment time series data.
+
+# Theoretical Background
+
+In standard treatment effect estimation, control groups are essential to infer counterfactual outcomes. However, many important policies (e.g., universal participation policies, fiscal shocks, large-scale mandates) lack such a group. Botosaru et al. (2023) propose the Forecasted Average Treatment Effect (FAT) estimator, which addresses this by forecasting the untreated potential outcome using the individual’s own pre-treatment history.
+
+## Assumptions and Key Features
+
+- **Forecast Unbiasedness**: Counterfactual forecasts must be unbiased on average.
+- **Weak Dependence**: Forecast errors must satisfy a central limit theorem.
+- **Basis Function Forecasting**: Forecasts are based on regressions using simple basis functions (e.g., polynomials).
+
+## Advantages
+
+- No control group needed.
+- Allows for heterogeneous treatment effects.
+- Robust to model misspecification.
+- Compatible with short time series.
+
+# Package Usage
+
+```{r library}
+#library(fatEstimation)
+```
+
+# Simulated Example
+
+This example demonstrates how to use the package on simulated data:
+
+```{r example}
+
+```
+
+# Interpretation
+
+The function `fat_estimate()` uses a simple polynomial regression on pre-treatment data to forecast the counterfactual outcome. The ATT is then estimated as the average difference between the observed and forecasted outcomes in the post-treatment period.
+
+# References
+
+Botosaru, I., Giacomini, R., & Weidner, M. (2023). *Forecasted Treatment Effects*. Working Paper. Available from authors.
