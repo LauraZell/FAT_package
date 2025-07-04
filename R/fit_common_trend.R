@@ -27,6 +27,7 @@ fit_common_trend <- function(data,
                            beta_hat = NULL) {
   # Subset for the specific unit
   unit_data <- data[data[[unit_var]] == unit, ]
+  unit_data[[time_var]] <- as.numeric(as.character(unit_data[[time_var]]))
   # Determine the minimum observed year for centering the time trend
   min_year <- min(unit_data[[time_var]], na.rm = TRUE)
   # Extract this unit’s treatment year (should be one fixed value)
