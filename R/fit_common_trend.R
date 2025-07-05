@@ -17,80 +17,61 @@
 #' @return A data frame containing all time periods for that unit and a `preds` column.
 #' @export
 fit_common_trend <- function(data,
-                           unit,
-                           unit_var,
-                           time_var,
-                           outcome_var,
-                           treat_time_var,
-                           degree,
-                           covariate_vars = NULL,
-                           beta_hat = NULL) {
-  # Subset for the specific unit
+                             unit,
+                             deg,
+                             unit_var,
+                             time_var,
+                             outcome_var,
+                             treat_time_var,
+                             covariate_vars = NULL,
+                             beta_hat = NULL) {
+
+  # Filter for the unit of interest
   unit_data <- data[data[[unit_var]] == unit, ]
-  unit_data[[time_var]] <- as.numeric(as.character(unit_data[[time_var]]))
-  # Determine the minimum observed year for centering the time trend
-  min_year <- min(unit_data[[time_var]], na.rm = TRUE)
-  # Extract this unit’s treatment year (should be one fixed value)
-  treat_year <- unique(unit_data[[treat_time_var]])
-  if (length(treat_year) != 1 || is.na(treat_year)) {
-    stop(paste("Invalid treatment year for unit:", unit))
+
+  # Fix: Convert time variable to numeric (handles DFAT-related join issues)
+  if (is.factor(unit_data[[time_var]])) {
+    unit_data[[time_var]] <- as.numeric(as.character(unit_data[[time_var]]))
   }
 
-  # Select pre-treatment data (<= treatment year)
-  pre_data <- unit_data[unit_data[[time_var]] <= treat_year, ]
-
-  # Adjust outcome if covariates and beta_hat are supplied
-  if (!is.null(covariate_vars) && !is.null(beta_hat)) {
-    # Create design matrix X for the covariates in pre-treatment data
-    X <- model.matrix(
-      as.formula(paste("~", paste(covariate_vars, collapse = " + "))),
-      data = pre_data
-    )
-
-    # Diagnostic checks
-    if (nrow(pre_data) != nrow(X)) {
-      stop("Mismatch between rows in pre_data and covariate matrix X")
-    }
-    if (length(beta_hat) != ncol(X)) {
-      stop("Length of beta_hat does not match number of covariates (including intercept)")
-    }
-
-    # Subtract predicted covariate effects (pooled across units) from the outcome
-    # → This gives us "covariate-adjusted" residual variation
-    pre_data$outcome_adj <- pre_data[[outcome_var]] - as.vector(X %*% beta_hat)
-
-    # Repeat adjustment for full data (for prediction)
-    X_pred <- model.matrix(
-      as.formula(paste("~", paste(covariate_vars, collapse = " + "))),
-      data = unit_data
-    )
-    unit_data$outcome_adj <- unit_data[[outcome_var]] - as.vector(X_pred %*% beta_hat)
-
-  } else {
-    # If no covariates are supplied, the adjusted outcome is just the raw outcome
-    pre_data$outcome_adj <- pre_data[[outcome_var]]
-    unit_data$outcome_adj <- unit_data[[outcome_var]]
+  # Fix: Convert treatment time variable to numeric if needed
+  if (is.factor(unit_data[[treat_time_var]])) {
+    unit_data[[treat_time_var]] <- as.numeric(as.character(unit_data[[treat_time_var]]))
   }
 
-  # Fit Polynomial Trend to Pre-Treatment (Covariate-Adjusted) Outcome
-  if (degree == 0) {
-    # A constant pre-treatment average (intercept-only model)
-    unit_data$preds <- mean(pre_data$outcome_adj, na.rm = TRUE)
-  } else {
-    # A unit-specific polynomial regression centered around min_year
-    f <- stats::as.formula(
-      paste0("outcome_adj ~ poly(I(", time_var, " - ", min_year, "), ", degree, ", raw = TRUE)")
-    )
-    mod <- stats::lm(f, data = pre_data)
-    unit_data$preds <- stats::predict(mod, newdata = unit_data)
+  # Remove rows with missing values in the time or treatment time variable
+  if (any(is.na(unit_data[[time_var]])) || any(is.na(unit_data[[treat_time_var]]))) {
+    stop(paste("Invalid treatment year or time for unit:", unit))
   }
 
-  # Return output in tidy format
-  tibble::tibble(
-    !!unit_var := unit_data[[unit_var]],
-    !!time_var := unit_data[[time_var]],
-    !!treat_time_var := unit_data[[treat_time_var]],
-    !!outcome_var := unit_data[[outcome_var]],
-    preds = unit_data$preds
-  )
+  # Center time variable relative to the treatment
+  unit_data$timeToTreat <- unit_data[[time_var]] - unit_data[[treat_time_var]]
+
+  # Construct polynomial time trend terms
+  for (d in 1:deg) {
+    unit_data[[paste0("ttreat", d)]] <- unit_data$timeToTreat^d
+  }
+
+  # Build regression formula
+  rhs_terms <- paste0("ttreat", 1:deg)
+  if (!is.null(covariate_vars)) {
+    rhs_terms <- c(rhs_terms, covariate_vars)
+  }
+  rhs <- paste(rhs_terms, collapse = " + ")
+  formula <- as.formula(paste(outcome_var, "~", rhs))
+
+  # Fit model to pre-treatment data
+  pre_data <- subset(unit_data, timeToTreat < 0)
+  if (nrow(pre_data) < deg + 1) {
+    # Not enough pre-treatment observations
+    return(data.frame())
+  }
+
+  model <- lm(formula, data = pre_data)
+
+  # Predict for full sample
+  unit_data$preds <- predict(model, newdata = unit_data)
+
+  # Return original outcome, predictions, and treatment time
+  return(unit_data[, c(unit_var, time_var, outcome_var, "preds", treat_time_var)])
 }

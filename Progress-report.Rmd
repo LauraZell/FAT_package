@@ -225,3 +225,44 @@ In helper-function (specify), include sdFAT asjustment as $ sdDFAT sdDFATh​=n1
 ​
 
 For now, only option treated is included. This could be changed to allow for less strict naming. 
+
+
+
+✅ Should we create a separate estimate_dfat() function?
+💡 Option 1: Keep everything inside estimate_fat() (your current setup)
+
+Advantages:
+
+    One central function to maintain.
+
+    Easy for users: no need to remember multiple function names.
+
+    Reduces code duplication, since DFAT shares >90% of the logic with FAT.
+
+Disadvantages:
+
+    Slightly more complex code logic (needs to check whether DFAT is active and branch accordingly).
+
+    Harder to expose default settings tailored to DFAT (e.g., different default SE methods).
+
+    The function interface might get longer as new DFAT-specific features are added (e.g., control_group_value, groupwise diagnostics, etc.).
+
+💡 Option 2: Add a wrapper estimate_dfat() (or even make it the main entry point for DFAT)
+
+Advantages:
+
+    Cleaner interface for users who only care about DFAT: avoids overwhelming them with FAT-specific arguments.
+
+    Allows you to set different defaults (e.g., clustered SEs as default in DFAT).
+
+    Easier to maintain and test if DFAT logic diverges more in the future (e.g., weighting schemes, parallel trends tests).
+
+Disadvantages:
+
+    Adds another function to document and test.
+
+    Might duplicate logic unless you carefully factor out shared components.
+
+➡️ Recommendation: Keep everything in estimate_fat() for now, as you’re still actively developing the package. Once the structure stabilizes, a separate estimate_dfat() wrapper might be helpful for clarity and defaults.
+
+

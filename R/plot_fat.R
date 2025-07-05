@@ -128,3 +128,48 @@ plot_fat <- function(fat_df, show_ci = TRUE, facet_by_degree = TRUE, title = NUL
 }
 
 
+
+plot_dfat_trajectory <- function(data, unit_var, time_var, outcome_var, treat_time_var,
+                                 predictions, treated_value = TRUE, control_value = FALSE) {
+  library(ggplot2)
+  library(dplyr)
+
+  # Get a treated unit and a control unit
+  treated_unit <- data %>%
+    filter(treated == treated_value) %>%
+    pull(.data[[unit_var]]) %>%
+    unique() %>%
+    .[1]
+
+  control_unit <- data %>%
+    filter(treated == control_value) %>%
+    pull(.data[[unit_var]]) %>%
+    unique() %>%
+    .[1]
+
+  treat_year <- data %>%
+    filter(.data[[unit_var]] == treated_unit) %>%
+    pull(.data[[treat_time_var]]) %>%
+    unique()
+
+  # Merge predictions with data
+  df <- data %>%
+    filter(.data[[unit_var]] %in% c(treated_unit, control_unit)) %>%
+    left_join(predictions, by = c(unit_var, time_var)) %>%
+    mutate(group = ifelse(.data[[unit_var]] == treated_unit, "Treated", "Control"),
+           observed = .data[[outcome_var]],
+           forecast = preds,
+           segment = ifelse(.data[[time_var]] < treat_year, "Observed", "Forecasted"))
+
+  ggplot(df, aes(x = .data[[time_var]], group = interaction(group, segment))) +
+    geom_line(aes(y = observed, color = group, linetype = "Observed"), linewidth = 1.1) +
+    geom_line(aes(y = forecast, color = group, linetype = "Forecasted"), linewidth = 1.1) +
+    geom_vline(xintercept = treat_year, linetype = "dotted") +
+    scale_linetype_manual(values = c("Observed" = "solid", "Forecasted" = "dashed")) +
+    labs(title = "DFAT trajectories: Treated vs. Control",
+         y = outcome_var, x = time_var, color = "Group", linetype = "Data type") +
+    theme_minimal()
+}
+
+
+

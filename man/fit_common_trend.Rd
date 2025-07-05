@@ -7,11 +7,11 @@
 fit_common_trend(
   data,
   unit,
+  deg,
   unit_var,
   time_var,
   outcome_var,
   treat_time_var,
-  degree,
   covariate_vars = NULL,
   beta_hat = NULL
 )
@@ -29,11 +29,11 @@ fit_common_trend(
 
 \item{treat_time_var}{Name of the treatment year variable (string).}
 
-\item{degree}{Degree of the polynomial used for fitting (integer).}
-
 \item{covariate_vars}{Optional character vector of covariate names.}
 
 \item{beta_hat}{Optional vector of estimated coefficients for covariates.}
+
+\item{degree}{Degree of the polynomial used for fitting (integer).}
 }
 \value{
 A data frame containing all time periods for that unit and a \code{preds} column.

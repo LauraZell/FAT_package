@@ -1,3 +1,29 @@
+# =============================================================================
+# estimate_fat: Forecasted Average Treatment (FAT) and Difference-in-FAT (DFAT)
+#               estimator with optional standard errors and return of forecasts
+#
+# INPUTS:
+# - data: a long-format dataframe with panel structure
+# - unit_var: column name for unit ID (e.g., state, municipality)
+# - time_var: column name for time (e.g., year)
+# - outcome_var: column name for observed outcome
+# - treat_time_var: column name for treatment timing
+# - units_to_include: optional vector of units to subset on
+# - degrees: polynomial degrees to use for trend fitting
+# - horizons: forecast horizons to estimate (e.g. 1 to 5 years after treatment)
+# - se_method: standard error method ("analytic", "bootstrap", "clustered", etc.)
+# - n_bootstrap: number of bootstrap reps if bootstrap SEs used
+# - covariate_vars: optional covariates to include in trend fitting
+# - beta_estimator: pooled beta estimation method ("none", "ols", "iv", "unitwise")
+# - min_iv_lag, max_iv_lag: used if beta_estimator = "iv"
+# - control_group_value: if not NULL, activates DFAT mode using "treated" column
+#
+# RETURNS:
+# - A list with:
+#     $results      => summary results by (deg, hh)
+#     $predictions  => unit-level forecasts and outcomes for plotting
+# =============================================================================
+
 estimate_fat <- function(data,
                          unit_var,
                          time_var,
@@ -14,45 +40,40 @@ estimate_fat <- function(data,
                          max_iv_lag = 2,
                          control_group_value = NULL) {
 
+  # Match estimator option
   beta_estimator <- match.arg(beta_estimator)
 
-  # Subset data if user provides a unit subset
+  # Optional subsetting of units
   if (!is.null(units_to_include)) {
     data <- data[data[[unit_var]] %in% units_to_include, ]
   }
 
-  # ========== DFAT MODE: Logic for difference-in-forecast-errors ==========
+  # Flag if we are in DFAT (difference-in-FAT) mode
   dfat_mode <- !is.null(control_group_value)
 
-  # Design decision: We do not allow the user to specify a treated column name.
-  # The logic expects "treated" column to exist if DFAT mode is activated.
   if (dfat_mode && !"treated" %in% names(data)) {
     stop("DFAT mode requires a column named 'treated' in the dataset.")
   }
 
-  # Compute treatment reference time
+  # Define the treatment time to use for fitting
   if (dfat_mode) {
-    # Reference treatment time for fitting: median treat year among treated units
+    # Use median treatment year among treated units as a common reference
     treated_years <- data[data$treated != control_group_value & !is.na(data[[treat_time_var]]), treat_time_var]
     if (length(treated_years) == 0) stop("No treated units with valid treatment year.")
     reference_treat_time <- stats::median(treated_years, na.rm = TRUE)
-
-    # Use reference treatment time for fitting all units
     data$treat_time_for_fit <- reference_treat_time
   } else {
-    # Regular FAT mode: fit per-unit adoption years
     data$treat_time_for_fit <- data[[treat_time_var]]
   }
 
-  # Create time-to-treatment variable
+  # Create time-to-treatment variable (centered time)
   data <- dplyr::mutate(data, timeToTreat = as.numeric(.data[[time_var]]) - .data$treat_time_for_fit)
 
-  # ========== Define internal combo function ==========
-
+  # Internal function to estimate FAT/DFAT for given (degree, horizon)
   fat_for_combo <- function(deg, hh) {
     beta_hat <- NULL
 
-    # Optional pooled regression step if covariates included
+    # If covariates + pooled estimation selected, compute beta
     if (!is.null(covariate_vars) && beta_estimator != "none") {
       if (beta_estimator == "ols") {
         beta_hat <- fit_common_beta_ols(data, outcome_var, covariate_vars, time_var,
@@ -63,12 +84,13 @@ estimate_fat <- function(data,
       }
     }
 
-    # Defensive: unitwise needs a polynomial trend
+    # Unitwise trend estimation requires at least a linear polynomial
     if (beta_estimator == "unitwise" && deg < 1) {
-      return(data.frame(deg = deg, hh = hh, FAT = NA_real_, sdFAT = NA_real_))
+      return(list(summary = data.frame(deg = deg, hh = hh, FAT = NA_real_, sdFAT = NA_real_),
+                  preds = NULL))
     }
 
-    # Fit trend and predict for each unit
+    # Forecast outcome for each unit
     all_preds <- unique(data[[unit_var]]) %>%
       purrr::map_df(~ {
         if (beta_estimator == "unitwise") {
@@ -80,7 +102,7 @@ estimate_fat <- function(data,
         }
       })
 
-    # FIX: In DFAT mode, merge back "treated" column from original dataset
+    # Add treated status in DFAT mode
     if (dfat_mode) {
       all_preds <- dplyr::left_join(
         all_preds,
@@ -89,11 +111,15 @@ estimate_fat <- function(data,
       )
     }
 
-    # Evaluate prediction horizon: 1, 2, ... years after adoption
+    # Add meta info for faceting/plotting
+    all_preds$deg <- deg
+    all_preds$hh <- hh
+
+    # Compute outcome difference at the treatment + hh year
     target_data <- dplyr::filter(all_preds, .data[[time_var]] == (.data$treat_time_for_fit + hh)) %>%
       dplyr::mutate(diff = .data[[outcome_var]] - preds)
 
-    # ==================== DFAT LOGIC ====================
+    # ===================== DFAT logic =====================
     if (dfat_mode) {
       treat_diff <- dplyr::filter(target_data, treated != control_group_value)$diff
       control_diff <- dplyr::filter(target_data, treated == control_group_value)$diff
@@ -111,18 +137,16 @@ estimate_fat <- function(data,
         })
         sdFAT <- stats::sd(FAT_boot, na.rm = TRUE)
       } else if (se_method == "clustered") {
-        # Clustered SEs: use diff ~ treatment dummy
         target_data$treated_dummy <- as.integer(target_data$treated != control_group_value)
         mod <- stats::lm(diff ~ treated_dummy, data = target_data)
         cluster <- target_data[[unit_var]]
-        cluster_se <- sqrt(sandwich::vcovCL(mod, cluster = cluster)["treated_dummy", "treated_dummy"])
-        sdFAT <- cluster_se
+        sdFAT <- sqrt(sandwich::vcovCL(mod, cluster = cluster)["treated_dummy", "treated_dummy"])
       } else {
         stop("Unsupported SE method in DFAT mode.")
       }
 
     } else {
-      # ==================== Regular FAT ====================
+      # ===================== Regular FAT =====================
       FAT <- mean(target_data$diff, na.rm = TRUE)
 
       if (se_method == "analytic") {
@@ -149,12 +173,21 @@ estimate_fat <- function(data,
       }
     }
 
-    data.frame(deg = deg, hh = hh, FAT = FAT, sdFAT = sdFAT)
+    # Return both summary and per-unit prediction data
+    list(summary = data.frame(deg = deg, hh = hh, FAT = FAT, sdFAT = sdFAT),
+         preds = all_preds)
   }
 
-  # Generate all combinations of degrees × horizons
+  # Generate all (degree, horizon) combinations
   combos <- base::expand.grid(deg = degrees, hh = horizons)
 
-  # Run estimation
-  purrr::pmap_dfr(combos, ~ fat_for_combo(..1, ..2))
+  # Run main function over all combos
+  results_list <- purrr::pmap(combos, ~ fat_for_combo(..1, ..2))
+
+  # Separate summary and predictions
+  summary_df <- purrr::map_dfr(results_list, "summary")
+  preds_list <- purrr::map(results_list, "preds")
+  all_predictions <- dplyr::bind_rows(preds_list, .id = "combo_id")
+
+  return(list(results = summary_df, predictions = all_predictions))
 }
