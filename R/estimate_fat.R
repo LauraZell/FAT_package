@@ -1,28 +1,33 @@
-# =============================================================================
-# estimate_fat: Forecasted Average Treatment (FAT) and Difference-in-FAT (DFAT)
-#               estimator with optional standard errors and return of forecasts
-#
-# INPUTS:
-# - data: a long-format dataframe with panel structure
-# - unit_var: column name for unit ID (e.g., state, municipality)
-# - time_var: column name for time (e.g., year)
-# - outcome_var: column name for observed outcome
-# - treat_time_var: column name for treatment timing
-# - units_to_include: optional vector of units to subset on
-# - degrees: polynomial degrees to use for trend fitting
-# - horizons: forecast horizons to estimate (e.g. 1 to 5 years after treatment)
-# - se_method: standard error method ("analytic", "bootstrap", "clustered", etc.)
-# - n_bootstrap: number of bootstrap reps if bootstrap SEs used
-# - covariate_vars: optional covariates to include in trend fitting
-# - beta_estimator: pooled beta estimation method ("none", "ols", "iv", "unitwise")
-# - min_iv_lag, max_iv_lag: used if beta_estimator = "iv"
-# - control_group_value: if not NULL, activates DFAT mode using "treated" column
-#
-# RETURNS:
-# - A list with:
-#     $results      => summary results by (deg, hh)
-#     $predictions  => unit-level forecasts and outcomes for plotting
-# =============================================================================
+#' Estimate Forecasted Average Treatment Effects (FAT / DFAT)
+#'
+#' @description
+#' Estimates forecasted average treatment effects (FAT) or difference-in-FAT
+#' (DFAT) across a range of polynomial degrees and forecast horizons. Optionally
+#' returns unit-level prediction trajectories for diagnostic and plotting use.
+#'
+#' @param data A long-format dataframe with panel structure.
+#' @param unit_var Name of the column for the unit ID (e.g., "state", "mun_id").
+#' @param time_var Name of the column for the time variable (e.g., "year").
+#' @param outcome_var Name of the outcome variable to be forecasted. (e.g., "ln_age_mort_rate").
+#' @param treat_time_var Name of the column indicating treatment year per unit. (e.g., "adopt_year").
+#' @param units_to_include Optional vector of unit names to restrict analysis to (e.g., "state1", "state2").
+#' @param degrees Vector of polynomial degrees for trend fitting (e.g., 0:2).
+#' @param horizons Vector of forecast horizons to estimate (e.g., 1:5).
+#' @param se_method Method for standard errors: "analytic", "bootstrap", "clustered", "unitwise".
+#' @param n_bootstrap Number of bootstrap repetitions (only if `se_method` is "bootstrap").
+#' @param covariate_vars Optional vector of column names to include as covariates.
+#' @param beta_estimator Pooled beta estimation method: "none", "ols", "iv", or "unitwise".
+#' @param min_iv_lag Minimum lag for IV estimation (if used).
+#' @param max_iv_lag Maximum lag for IV estimation (if used).
+#' @param control_group_value Optional. If set (e.g., control_group_value = FALSE), DFAT mode is activated.
+#'                            Treated units are expected to be marked in a "treated" column (TRUE/FALSE).
+#'
+#' @return A list with:
+#' \describe{
+#'   \item{results}{Data frame with summary estimates: deg, hh, FAT, sdFAT.}
+#'   \item{predictions}{Data frame with unit-level observed and predicted values across time, for plotting.}
+#' }
+
 
 estimate_fat <- function(data,
                          unit_var,
@@ -43,7 +48,7 @@ estimate_fat <- function(data,
   # Match estimator option
   beta_estimator <- match.arg(beta_estimator)
 
-  # Optional subsetting of units
+  # Optional subsetting to user-specified units
   if (!is.null(units_to_include)) {
     data <- data[data[[unit_var]] %in% units_to_include, ]
   }
@@ -55,7 +60,7 @@ estimate_fat <- function(data,
     stop("DFAT mode requires a column named 'treated' in the dataset.")
   }
 
-  # Define the treatment time to use for fitting
+  # Set common treatment time for DFAT (median among treated) or use individual treat_time for regular FAT
   if (dfat_mode) {
     # Use median treatment year among treated units as a common reference
     treated_years <- data[data$treated != control_group_value & !is.na(data[[treat_time_var]]), treat_time_var]
@@ -102,7 +107,7 @@ estimate_fat <- function(data,
         }
       })
 
-    # Add treated status in DFAT mode
+    # For DFAT: Merge treatment indicator back (used only in post-treatment comparison)
     if (dfat_mode) {
       all_preds <- dplyr::left_join(
         all_preds,
@@ -111,12 +116,20 @@ estimate_fat <- function(data,
       )
     }
 
-    # Add meta info for faceting/plotting
-    all_preds$deg <- deg
-    all_preds$hh <- hh
+    # Add meta info and new variable for actual forecast year (used for plotting)
+    all_preds <- all_preds %>%
+      dplyr::mutate(
+        forecast_year = .data$treat_time_for_fit + hh,
+        deg = deg,
+        hh = hh
+      )
 
-    # Compute outcome difference at the treatment + hh year
-    target_data <- dplyr::filter(all_preds, .data[[time_var]] == (.data$treat_time_for_fit + hh)) %>%
+    # # Compute outcome difference at the treatment + hh year
+    # target_data <- dplyr::filter(all_preds, .data[[time_var]] == (.data$treat_time_for_fit + hh)) %>%
+    #   dplyr::mutate(diff = .data[[outcome_var]] - preds)
+
+    # Keep only forecast horizon
+    target_data <- dplyr::filter(all_preds, .data[[time_var]] == forecast_year) %>%
       dplyr::mutate(diff = .data[[outcome_var]] - preds)
 
     # ===================== DFAT logic =====================
@@ -181,13 +194,27 @@ estimate_fat <- function(data,
   # Generate all (degree, horizon) combinations
   combos <- base::expand.grid(deg = degrees, hh = horizons)
 
-  # Run main function over all combos
-  results_list <- purrr::pmap(combos, ~ fat_for_combo(..1, ..2))
+  # # Run main function over all combos
+  # results_list <- purrr::pmap(combos, ~ fat_for_combo(..1, ..2))
+  #
+  # # Separate summary and predictions
+  # summary_df <- purrr::map_dfr(results_list, "summary")
+  # preds_list <- purrr::map(results_list, "preds")
+  # all_predictions <- dplyr::bind_rows(preds_list, .id = "combo_id")
+  #
+  # return(list(results = summary_df, predictions = all_predictions))
+  #}
 
-  # Separate summary and predictions
-  summary_df <- purrr::map_dfr(results_list, "summary")
-  preds_list <- purrr::map(results_list, "preds")
-  all_predictions <- dplyr::bind_rows(preds_list, .id = "combo_id")
 
-  return(list(results = summary_df, predictions = all_predictions))
+  # Estimate and collect all results
+  results <- purrr::pmap_dfr(combos, ~ fat_for_combo(..1, ..2))
+
+  # 🔧 Re-attach all predictions for plotting (bind them together)
+  all_preds <- purrr::map_dfr(attr(results, "row.names"), function(i) {
+    attr(results[i, ], "predictions")
+  })
+  attr(results, "predictions") <- all_preds
+
+  return(results)
 }
+

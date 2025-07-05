@@ -129,47 +129,118 @@ plot_fat <- function(fat_df, show_ci = TRUE, facet_by_degree = TRUE, title = NUL
 
 
 
-plot_dfat_trajectory <- function(data, unit_var, time_var, outcome_var, treat_time_var,
-                                 predictions, treated_value = TRUE, control_value = FALSE) {
-  library(ggplot2)
+plot_fat_dfat_avg_trajectory <- function(predictions_df, mode = c("fat", "dfat"),
+                                         unit_var = "state", time_var = "Year",
+                                         outcome_var = "ln_age_mort_rate", pred_var = "preds") {
+
+  mode <- match.arg(mode)
   library(dplyr)
+  library(ggplot2)
 
-  # Get a treated unit and a control unit
-  treated_unit <- data %>%
-    filter(treated == treated_value) %>%
-    pull(.data[[unit_var]]) %>%
-    unique() %>%
-    .[1]
+  # Label treatment group
+  if (mode == "dfat") {
+    if (!"treated" %in% names(predictions_df)) stop("DFAT mode requires a 'treated' column.")
+    predictions_df <- predictions_df %>%
+      mutate(group = ifelse(treated == 1, "Treated", "Control"))
+  } else {
+    predictions_df$group <- "Treated"
+  }
 
-  control_unit <- data %>%
-    filter(treated == control_value) %>%
-    pull(.data[[unit_var]]) %>%
-    unique() %>%
-    .[1]
+  # Aggregate: mean over units, by Year × group × deg
+  agg_df <- predictions_df %>%
+    group_by(Year, group, deg) %>%
+    summarise(
+      obs = mean(.data[[outcome_var]], na.rm = TRUE),
+      pred = mean(.data[[pred_var]], na.rm = TRUE),
+      .groups = "drop"
+    ) %>%
+    tidyr::pivot_longer(cols = c("obs", "pred"),
+                        names_to = "type",
+                        values_to = "value")
 
-  treat_year <- data %>%
-    filter(.data[[unit_var]] == treated_unit) %>%
-    pull(.data[[treat_time_var]]) %>%
-    unique()
-
-  # Merge predictions with data
-  df <- data %>%
-    filter(.data[[unit_var]] %in% c(treated_unit, control_unit)) %>%
-    left_join(predictions, by = c(unit_var, time_var)) %>%
-    mutate(group = ifelse(.data[[unit_var]] == treated_unit, "Treated", "Control"),
-           observed = .data[[outcome_var]],
-           forecast = preds,
-           segment = ifelse(.data[[time_var]] < treat_year, "Observed", "Forecasted"))
-
-  ggplot(df, aes(x = .data[[time_var]], group = interaction(group, segment))) +
-    geom_line(aes(y = observed, color = group, linetype = "Observed"), linewidth = 1.1) +
-    geom_line(aes(y = forecast, color = group, linetype = "Forecasted"), linewidth = 1.1) +
-    geom_vline(xintercept = treat_year, linetype = "dotted") +
-    scale_linetype_manual(values = c("Observed" = "solid", "Forecasted" = "dashed")) +
-    labs(title = "DFAT trajectories: Treated vs. Control",
-         y = outcome_var, x = time_var, color = "Group", linetype = "Data type") +
-    theme_minimal()
+  # Plot: Average observed and predicted for each group
+  ggplot(agg_df, aes(x = Year, y = value, color = type, linetype = type)) +
+    geom_line(size = 1.1) +
+    facet_wrap(~ group + deg, ncol = 2, labeller = label_both) +
+    scale_color_manual(values = c("obs" = "black", "pred" = "blue"),
+                       labels = c("Observed", "Forecasted")) +
+    scale_linetype_manual(values = c("obs" = "solid", "pred" = "dashed")) +
+    scale_x_continuous(breaks = scales::pretty_breaks(), labels = scales::number_format(accuracy = 1)) +
+    theme_minimal(base_size = 13) +
+    theme(legend.position = "bottom") +
+    labs(
+      title = paste0("Average Outcome Trajectories (", toupper(mode), " Mode)"),
+      subtitle = "Solid = Observed, Dashed = Forecasted | Facets: Group × Degree",
+      x = "Year",
+      y = outcome_var,
+      color = "Line Type",
+      linetype = "Line Type"
+    )
 }
 
 
+#' Plot FAT or DFAT trajectories for observed vs. forecasted values
+#'
+#' @param predictions_df A dataframe with observed and forecasted outcomes, e.g. `results_fat$predictions`
+#' @param mode Character, either "fat" or "dfat"
+#' @param unit_var Character, name of the unit identifier (e.g. "state")
+#' @param time_var Character, name of the time variable (e.g. "Year")
+#' @param outcome_var Character, observed outcome variable (e.g. "ln_age_mort_rate")
+#' @param pred_var Character, forecasted value variable (e.g. "preds")
+#'
+#' @return A ggplot object showing average observed and forecasted trajectories
+#' @export
+plot_fat_dfat_trajectory <- function(predictions_df,
+                                     mode = c("fat", "dfat"),
+                                     unit_var = "state",
+                                     time_var = "Year",
+                                     outcome_var = "ln_age_mort_rate",
+                                     pred_var = "preds") {
 
+  mode <- match.arg(mode)
+
+  library(ggplot2)
+  library(dplyr)
+  library(tidyr)
+
+  # === Grouping logic ===
+  if (mode == "dfat") {
+    if (!"treated" %in% names(predictions_df)) stop("DFAT mode requires a 'treated' column.")
+    predictions_df <- predictions_df %>%
+      mutate(group = ifelse(treated == 1, "Treated", "Control"))
+  } else {
+    predictions_df$group <- "Treated"
+  }
+
+  # === Reshape into long format ===
+  df_long <- predictions_df %>%
+    select(deg, !!sym(time_var), !!sym(unit_var), group,
+           obs = !!sym(outcome_var),
+           pred = !!sym(pred_var)) %>%
+    pivot_longer(cols = c("obs", "pred"), names_to = "type", values_to = "value") %>%
+    filter(!is.na(value))  # Drop NAs (especially forecasts before treatment year)
+
+  # === Average over groups per year ===
+  df_avg <- df_long %>%
+    group_by(deg, group, !!sym(time_var), type) %>%
+    summarise(value = mean(value, na.rm = TRUE), .groups = "drop")
+
+  # === Final plot ===
+  ggplot(df_avg, aes(x = .data[[time_var]], y = value, color = type, linetype = type)) +
+    geom_line(size = 1) +
+    facet_wrap(~ deg, ncol = 1, labeller = label_both) +
+    scale_color_manual(values = c("obs" = "black", "pred" = "blue"),
+                       labels = c("Observed", "Forecasted")) +
+    scale_linetype_manual(values = c("obs" = "solid", "pred" = "dashed")) +
+    scale_x_continuous(breaks = scales::pretty_breaks(n = 10)) +
+    theme_minimal(base_size = 13) +
+    theme(legend.position = "bottom") +
+    labs(
+      title = paste0("Group-Averaged ", toupper(mode), " Trajectories"),
+      subtitle = "Observed vs Forecasted Outcomes by Group and Polynomial Degree",
+      x = "Year",
+      y = "Outcome Value",
+      color = "Type",
+      linetype = "Type"
+    )
+}

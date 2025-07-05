@@ -61,29 +61,35 @@ Package Name: *fatEstimation*
     - plot_se_diagnostics() function already built.
     - could add @examples and more plots if needed.
 
-2. 🧪 Extend Testing
+2. Extend Testing
 
     - Add tests for edge cases (e.g., missing data, degenerate horizons).
     - Test for correctness of standard errors (within tolerances).
 
-3. 📄 Finish Vignette
+3. Finish Vignette
 
-        - Now that diagnostics and tests are working, wrap the vignette:
-        Add a minimal reproducible example using cannabis_overdose.
-        Include interpretation of plots.
-        Explain method intuitively.
+     - Now that diagnostics and tests are working, wrap the vignette:
+       - Add a minimal reproducible example using cannabis_overdose.
+       - Include interpretation of plots.
+       - Explain method intuitively.
+       
+4. Package Structure
 
-5. 📈 Optional Enhancements
+    - Ensure all functions are documented with @title, @description, @param, @return.
+    - Add examples to each function using @examples.
+    - Check that all helper functions are exported via NAMESPACE.
+    - Consider adding a NEWS.md file for versioning.
+    - Ensure DESCRIPTION has all dependencies listed (e.g., ggplot2, dplyr, etc.).
+    
+5. Optional Enhancements
 
-    Add plot_fat_estimates() for main results visualization (FAT + CIs).
-    Add a helper to compute average pre-trend fit quality or diagnostics.
-
-6. 📝 Submit-Readiness
+    - Add a helper to compute average pre-trend fit quality or diagnostics.
+    - Consider adding unitwise forecasts as an exportable function (fit_unitwise_trend()). Should we make the unitwise forecast exportable? At the moment, you can only call fit_unitwise_trend() inside estimate_fat(). This would allow users to replicate forecasts for individual units, which can be useful for transparency and verification.
+    
+6. Submit-Readiness
 
     Add a NEWS.md file for versioning.
-
     Validate your package with devtools::check() on multiple platforms (or rcmdcheck).
-
     Consider whether you want to publish the package on GitHub, CRAN, or just share internally.
 
 
@@ -94,23 +100,18 @@ Package Name: *fatEstimation*
 
 To keep diagnostics clean and reproducible:
 
-    ✅ Create one .R file per diagnostic task in dev/
-
-    ✅ Name them clearly: e.g. se_diagnostic.R, placebo_diagnostic.R, timing_test.R
-
-    ✅ Always start each script with devtools::load_all() and data(...)
-
-    ✅ Use consistent naming (results_...) and concise plots with ggplot2
+    - Create one .R file per diagnostic task in dev/
+    - Name them clearly: e.g. se_diagnostic.R, placebo_diagnostic.R, timing_test.R
+    - Always start each script with devtools::load_all() and data(...)
+    - Use consistent naming (results_...) and concise plots with ggplot2
 
 Would you like help adding this as an RStudio add-in or a simple Makefile task for running all diagnostics?
 
 Would you like help adding a saved version of the plot or organizing this into a diagnostic report template later (e.g. using R Markdown)?
 
-
 Would you like me to prepare a directory-ready list of R/ file names and starter file headers (with @title, etc.)?
 
-Should we make the unitwise forecast exportable?
-At the moment, you might only call fit_unitwise_trend() inside estimate_fat().
+
 
 But you could also make it available as a user-level function by exporting it via @export. This allows researchers to do:
 
