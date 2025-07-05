@@ -7,34 +7,37 @@
 fit_unitwise_trend(
   data,
   unit,
+  degree,
   unit_var,
   time_var,
   outcome_var,
   treat_time_var,
-  degree,
-  covariate_vars = NULL
+  covariate_vars = NULL,
+  beta_hat = NULL
 )
 }
 \arguments{
-\item{data}{A \code{data.frame} containing the panel data.}
+\item{data}{The full dataset (data frame).}
 
-\item{unit}{A single unit identifier (e.g., a state or municipality).}
+\item{unit}{A single unit (e.g. state or municipality) to subset on.}
 
-\item{unit_var}{Character: name of the unit variable.}
+\item{degree}{Degree of the polynomial (e.g. 0, 1, 2).}
 
-\item{time_var}{Character: name of the time variable.}
+\item{unit_var}{Name of the unit identifier variable (string).}
 
-\item{outcome_var}{Character: name of the outcome variable.}
+\item{time_var}{Name of the time variable (string).}
 
-\item{treat_time_var}{Character: name of the treatment time variable.}
+\item{outcome_var}{Name of the outcome variable to predict (string).}
 
-\item{degree}{Integer: degree of the polynomial trend to fit.}
+\item{treat_time_var}{Name of the treatment time variable (string).}
 
-\item{covariate_vars}{Character vector of time-varying covariate names.}
+\item{covariate_vars}{Optional character vector of covariate names.}
+
+\item{beta_hat}{Optional named vector of pooled covariate coefficients.}
 }
 \value{
-A \code{tibble} with columns for unit, time, treatment time, actual outcome,
-and fitted trend values (\code{preds}).
+A data frame with unit, time, outcome, predicted values (\code{preds}),
+and treatment time.
 }
 \description{
 This function estimates a polynomial trend for a single unit, adjusting for

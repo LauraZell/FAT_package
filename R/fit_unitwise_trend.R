@@ -8,61 +8,81 @@
 #'
 #' This approach allows for heterogeneous covariate effects across units.
 #'
-#' @param data A `data.frame` containing the panel data.
-#' @param unit A single unit identifier (e.g., a state or municipality).
-#' @param unit_var Character: name of the unit variable.
-#' @param time_var Character: name of the time variable.
-#' @param outcome_var Character: name of the outcome variable.
-#' @param treat_time_var Character: name of the treatment time variable.
-#' @param degree Integer: degree of the polynomial trend to fit.
-#' @param covariate_vars Character vector of time-varying covariate names.
+#' @param data The full dataset (data frame).
+#' @param unit A single unit (e.g. state or municipality) to subset on.
+#' @param degree Degree of the polynomial (e.g. 0, 1, 2).
+#' @param unit_var Name of the unit identifier variable (string).
+#' @param time_var Name of the time variable (string).
+#' @param outcome_var Name of the outcome variable to predict (string).
+#' @param treat_time_var Name of the treatment time variable (string).
+#' @param covariate_vars Optional character vector of covariate names.
+#' @param beta_hat Optional named vector of pooled covariate coefficients.
 #'
-#' @return A `tibble` with columns for unit, time, treatment time, actual outcome,
-#' and fitted trend values (`preds`).
-#'
+#' @return A data frame with unit, time, outcome, predicted values (`preds`),
+#'         and treatment time.
 #' @export
-
-#'
 fit_unitwise_trend <- function(data,
-                                    unit,
-                                    unit_var,
-                                    time_var,
-                                    outcome_var,
-                                    treat_time_var,
-                                    degree,
-                                    covariate_vars = NULL) {
-
+                               unit,
+                               degree,
+                               unit_var,
+                               time_var,
+                               outcome_var,
+                               treat_time_var,
+                               covariate_vars = NULL,
+                               beta_hat = NULL) {
+  # Filter data to the unit of interest
   unit_data <- data[data[[unit_var]] == unit, ]
-  treat_year <- unique(unit_data[[treat_time_var]])
-  if (length(treat_year) != 1 || is.na(treat_year)) {
-    stop(paste("Invalid treatment year for unit:", unit))
+
+  # Ensure numeric time variables (avoids factor errors)
+  unit_data[[time_var]] <- as.numeric(as.character(unit_data[[time_var]]))
+  unit_data[[treat_time_var]] <- as.numeric(as.character(unit_data[[treat_time_var]]))
+
+  # Create time-to-treatment variable
+  unit_data$timeToTreat <- unit_data[[time_var]] - unit_data[[treat_time_var]]
+
+  # Create polynomial terms for timeToTreat
+  for (d in 1:degree) {
+    unit_data[[paste0("ttreat", d)]] <- unit_data$timeToTreat^d
   }
 
-  # Subset to pre-treatment observations
-  pre_data <- unit_data[unit_data[[time_var]] <= treat_year, ]
-
-  # Build formula
-  rhs_terms <- paste0("poly(", time_var, ", ", degree, ", raw = TRUE)")
-  if (!is.null(covariate_vars)) {
-    rhs_terms <- paste(rhs_terms, paste(covariate_vars, collapse = " + "), sep = " + ")
+  # Subtract covariate contribution if beta_hat is provided
+  if (!is.null(beta_hat) && !is.null(covariate_vars)) {
+    covariate_matrix <- as.matrix(unit_data[, covariate_vars, drop = FALSE])
+    covariate_effect <- as.vector(covariate_matrix %*% beta_hat[covariate_vars])
+    unit_data$adjusted_outcome <- unit_data[[outcome_var]] - covariate_effect
+  } else {
+    unit_data$adjusted_outcome <- unit_data[[outcome_var]]
   }
-  fml <- as.formula(paste(outcome_var, "~", rhs_terms))
 
-  # Estimate the model on pre-treatment data
-  mod <- stats::lm(fml, data = pre_data)
+  # Keep only pre-treatment data for estimation
+  pre_data <- subset(unit_data, timeToTreat < 0)
+  if (nrow(pre_data) < degree + 1) return(data.frame())  # Too few obs.
 
-  # Predict on full data for that unit
-  unit_data$preds <- stats::predict(mod, newdata = unit_data)
+  # Create regression formula (e.g. adjusted_outcome ~ ttreat1 + ttreat2)
+  rhs_terms <- paste0("ttreat", 1:degree)
+  rhs <- paste(rhs_terms, collapse = " + ")
+  formula <- as.formula(paste("adjusted_outcome ~", rhs))
 
-  # Return tidy output
-  tibble::tibble(
-    !!unit_var := unit_data[[unit_var]],
-    !!time_var := unit_data[[time_var]],
-    !!treat_time_var := unit_data[[treat_time_var]],
-    !!outcome_var := unit_data[[outcome_var]],
-    preds = unit_data$preds
-  )
+  # Fit model on pre-treatment data
+  model <- lm(formula, data = pre_data)
+
+  # Create empty preds
+  unit_data$preds <- NA_real_
+
+  # Predict only for post-treatment periods (timeToTreat >= 0)
+  post_data <- subset(unit_data, timeToTreat >= 0)
+  preds <- predict(model, newdata = post_data)
+
+  # Fill in predictions only for post-treatment years
+  unit_data$preds[unit_data$timeToTreat >= 0] <- preds
+
+  # Re-add covariate effects if subtracted
+  if (!is.null(beta_hat) && !is.null(covariate_vars)) {
+    unit_data$preds[unit_data$timeToTreat >= 0] <-
+      unit_data$preds[unit_data$timeToTreat >= 0] +
+      covariate_effect[unit_data$timeToTreat >= 0]
+  }
+
+  # Return relevant columns
+  return(unit_data[, c(unit_var, time_var, outcome_var, "preds", treat_time_var)])
 }
-
-
-
