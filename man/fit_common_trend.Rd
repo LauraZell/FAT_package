@@ -2,12 +2,12 @@
 % Please edit documentation in R/fit_common_trend.R
 \name{fit_common_trend}
 \alias{fit_common_trend}
-\title{Fit Polynomial Regression for One Unit (with optional covariates)}
+\title{Fit Polynomial Regression for One Unit (with optional covariates and pooled beta subtraction)}
 \usage{
 fit_common_trend(
   data,
   unit,
-  deg,
+  degree,
   unit_var,
   time_var,
   outcome_var,
@@ -21,6 +21,8 @@ fit_common_trend(
 
 \item{unit}{A single unit (e.g., state or municipality) to subset on.}
 
+\item{degree}{Degree of the polynomial used for fitting (integer).}
+
 \item{unit_var}{Name of the unit variable (string).}
 
 \item{time_var}{Name of the time variable (string).}
@@ -31,15 +33,13 @@ fit_common_trend(
 
 \item{covariate_vars}{Optional character vector of covariate names.}
 
-\item{beta_hat}{Optional vector of estimated coefficients for covariates.}
-
-\item{degree}{Degree of the polynomial used for fitting (integer).}
+\item{beta_hat}{Optional named vector of estimated coefficients for covariates.}
 }
 \value{
-A data frame containing all time periods for that unit and a \code{preds} column.
+A data frame with original outcome, prediction, and treatment time.
 }
 \description{
 This function fits a unit-specific polynomial trend to pre-treatment data.
-If covariates are provided, it subtracts the expected contribution of those
-covariates using a common beta (pooled across units) before estimating the trend.
+If covariates and a common beta_hat are provided (from pooled OLS or IV),
+it subtracts the covariate effect from the outcome before estimating the trend.
 }
