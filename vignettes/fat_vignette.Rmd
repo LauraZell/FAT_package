@@ -1,5 +1,5 @@
 ---
-title: "Forecasted Average Treatment Effects in the Absence of a Control Group"
+title: "Forecasted Average Treatment Effects"
 output: rmarkdown::html_vignette
 vignette: >
   %\VignetteIndexEntry{Forecasted Average Treatment Effects}
@@ -16,11 +16,30 @@ knitr::opts_chunk$set(
 
 # Introduction
 
-The `fatEstimator` package implements the methodology of Botosaru, Giacomini, and Weidner (2023), designed for settings where no valid control group exists. This includes nationwide reforms, universal policy shifts, and endogenous adoption, where traditional treatment-control comparisons fail.
+The `fatEstimator` package implements the methodology of Botosaru, Giacomini, and Weidner (2024), designed for settings where no valid control group exists. This includes nationwide reforms, universal policy shifts, and endogenous adoption, where traditional treatment-control comparisons fail.
+Rather than relying on comparisons between treated and untreated units, the FAT method forecasts what each treated unit's outcome would have been in the absence of treatment using only its own pre-treatment data.
 
-# Theoretical Background
+## The FAT Estimator (Baseline Case)
 
-In standard treatment effect estimation, control groups are essential to infer counterfactual outcomes. However, many important policies (e.g., universal participation policies, fiscal shocks, large-scale mandates) lack such a group. Botosaru et al. (2023) propose the Forecasted Average Treatment Effect (FAT) estimator, which addresses this by forecasting the untreated potential outcome using the individual’s own pre-treatment history.
+The forecasted average treatment effect at horizon h is defined as:
+
+$$
+\widehat{FAT_h} := \frac{1}{n} \sum_{i \in n} [Y_{i \tau + h} - \widehat{Y}_{i \tau + h}(0)]
+$$
+
+
+where:
+
+- $n$: number of units.
+- $Y_{i \tau + h}$: observed outcome for unit $i$ at time $\tau + h$.
+- $\widehat{Y}_{i \tau + h}(0)$: measurable function of past outcomes for unit $i$ at time $\tau + h$ using individual-specific pre-treatment outcomes. 
+
+Each estimation follows three steps:
+
+1. Fit pre-treatment model for each unit. 
+2. Forecast outcomes at $T*_i + h$
+3. Compare the forecasted and actual outcomes. 
+
 
 ## Assumptions and Key Features
 
@@ -36,32 +55,74 @@ In standard treatment effect estimation, control groups are essential to infer c
 - Robust to model misspecification.
 - Compatible with short time series.
 
-## Estimation Workflow
 
-Each estimation follows three steps:
+## Application steps
 
-1. Fit pre-treatment model for each unit. 
-2. Forecast outcomes at $T*_i + h$
-3. Compare the forecasted and actual outcomes. 
+1. Prepare the data in long format with columns for unit, time, outcome, treatment time, and covariates.
+
+2. Call `estimate_fat()`, specifying the unit and time variables, outcome variable, treatment year, degrees of polynomial, and forecast horizon. The function will fit a polynomial trend to pre-treatment data, forecast the counterfactual outcomes, and compute the average treatment effect.
+The output contains:
+  - `results_fat$results`: A table of FAT estimates and standard errors for each (degree, horizon) combination.
+  - `results_fat$predictions`: Unit-level observed and forecasted values, useful for plotting and diagnostics.
+
+3. Visualise results (optional): 
+  - Use `plot_fat()` to visualize the forecasted treatment effects over time.
+  - Use `summary_fat()` to get a summary of the estimated treatment effects.
 
 
-## Model Specifications and Commands.
+
+## Model Extensions:
 
 1. Baseline (no covariates):
 
+All units share a common time trend (polynomial of degree dd).
+
+
+
+where $\hat{Y}_{i,\tau_i^* + h}^{(0)}$ is the forecasted outcome using a polynomial trend fitted to pre-treatment data.
+
+```{r example baseline}
+
+```
+
+
+
+2. Include Covariates 
+
+Each unit shares a common time trend, but covariates are included to adjust the outcome.
+
+Use when policy variables react to outcomes.
+
+Extensions: IV allows for endogenous covariates. 
+
+
+```{r iv}
+
+```
+
+
+
+2. Heterogeneous Trends 
+
+Each unit gets its own polynomial trend. Use when units are highly heterogeneous and individual dynamics dominate.
+
 $$
-FAT(h) = \frac{1}{|\mathcal{I}|} \sum_{i \in \mathcal{I}} \left( Y_{i,T_i^* + h} - \hat{Y}_{i,T_i^* + h}^{(0)} \right)
+FAT(h) = 
 $$
 
-2. Covariates 
+```{r heterogenous}
+
+```
 
 
-2. Heterogeneous Trends
 
-
-3. Difference-in-FAt
+3. Difference-in-FAT
 
 Motivation: External shocks may affect all units post-treatment. DFAT compares treated vs. untreated forecasts. 
+
+$$
+DFAT(h) = FAT^T(h) - FAT^C(h)
+$$
 
 Parameter: 
 
