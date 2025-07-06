@@ -16,7 +16,7 @@ knitr::opts_chunk$set(
 
 # Introduction
 
-This vignette introduces the R package `fatEstimator`, which implements the method developed by Botosaru, Giacomini, and Weidner (2023) to estimate policy effects in the absence of a control group. The estimator relies on forecasting counterfactual outcomes based on short pre-treatment time series data.
+The `fatEstimator` package implements the methodology of Botosaru, Giacomini, and Weidner (2023), designed for settings where no valid control group exists. This includes nationwide reforms, universal policy shifts, and endogenous adoption, where traditional treatment-control comparisons fail.
 
 # Theoretical Background
 
@@ -27,6 +27,7 @@ In standard treatment effect estimation, control groups are essential to infer c
 - **Forecast Unbiasedness**: Counterfactual forecasts must be unbiased on average.
 - **Weak Dependence**: Forecast errors must satisfy a central limit theorem.
 - **Basis Function Forecasting**: Forecasts are based on regressions using simple basis functions (e.g., polynomials).
+- **Short Panel**: Identification and inference do not require long time series. 
 
 ## Advantages
 
@@ -34,6 +35,41 @@ In standard treatment effect estimation, control groups are essential to infer c
 - Allows for heterogeneous treatment effects.
 - Robust to model misspecification.
 - Compatible with short time series.
+
+## Estimation Workflow
+
+Each estimation follows three steps:
+
+1. Fit pre-treatment model for each unit. 
+2. Forecast outcomes at $T*_i + h$
+3. Compare the forecasted and actual outcomes. 
+
+
+## Model Specifications and Commands.
+
+1. Baseline (no covariates):
+
+$$
+FAT(h) = \frac{1}{|\mathcal{I}|} \sum_{i \in \mathcal{I}} \left( Y_{i,T_i^* + h} - \hat{Y}_{i,T_i^* + h}^{(0)} \right)
+$$
+
+2. Covariates 
+
+
+2. Heterogeneous Trends
+
+
+3. Difference-in-FAt
+
+Motivation: External shocks may affect all units post-treatment. DFAT compares treated vs. untreated forecasts. 
+
+Parameter: 
+
+```{r }
+
+```
+
+
 
 # Package Usage
 
