@@ -112,7 +112,6 @@ Would you like help adding a saved version of the plot or organizing this into a
 Would you like me to prepare a directory-ready list of R/ file names and starter file headers (with @title, etc.)?
 
 
-
 But you could also make it available as a user-level function by exporting it via @export. This allows researchers to do:
 
 fit_unitwise_trend(data = df, unit = "Zurich", ...)

@@ -187,8 +187,11 @@ estimate_fat <- function(data,
     }
 
     # Return both summary and per-unit prediction data
-    list(summary = data.frame(deg = deg, hh = hh, FAT = FAT, sdFAT = sdFAT),
-         preds = all_preds)
+    return(list(
+      summary = data.frame(deg = deg, hh = hh, FAT = FAT, sdFAT = sdFAT),
+      predictions = all_preds
+    ))
+
   }
 
   # Generate all (degree, horizon) combinations
@@ -206,15 +209,24 @@ estimate_fat <- function(data,
   #}
 
 
-  # Estimate and collect all results
-  results <- purrr::pmap_dfr(combos, ~ fat_for_combo(..1, ..2))
+#   # Estimate and collect all results
+#   results <- purrr::pmap_dfr(combos, ~ fat_for_combo(..1, ..2))
+#
+#   # 🔧 Re-attach all predictions for plotting (bind them together)
+#   all_preds <- purrr::map_dfr(attr(results, "row.names"), function(i) {
+#     attr(results[i, ], "predictions")
+#   })
+#   attr(results, "predictions") <- all_preds
+#
+#   return(results)
+# }
 
-  # 🔧 Re-attach all predictions for plotting (bind them together)
-  all_preds <- purrr::map_dfr(attr(results, "row.names"), function(i) {
-    attr(results[i, ], "predictions")
-  })
-  attr(results, "predictions") <- all_preds
+  results_list <- purrr::pmap(combos, fat_for_combo)
 
-  return(results)
+  summary_df <- purrr::map_dfr(results_list, "summary")
+  preds_df <- purrr::map_dfr(results_list, "predictions", .id = "combo_id")
+
+  return(list(results = summary_df, predictions = preds_df))
 }
+
 
