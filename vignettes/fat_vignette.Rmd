@@ -16,7 +16,7 @@ knitr::opts_chunk$set(
 
 # Introduction
 
-The `fatEstimator` package implements the *Forecasted Average Treatment Effect Approach* from Botosaru, Giacomini, and Weidner (2024). It is designed for settings where a traditional control group is not available, such as universal policy interventions, endogenous treatment adoption, or policies with no clear comparison group.
+The `fatEstimator` package implements the *Forecasted Average Treatment Effect Approach* from Botosaru, Giacomini, and Weidner (2024). It is designed for settings where a traditional control group is not available, such as universal policy interventions, endogenous treatment adoption, or policies with no clear comparison group. Additionally, the approach can be a useful robustness check for settings with a control group, especially when its validity is questionable or the assumptions of the existing methods are too strong to be credible.
 
 The central idea is to construct unit-specific counterfactuals using **forecasting models based on pre-treatment outcomes**, and to define the treatment effect as the deviation of the observed post-treatment outcome from this forecast.
 
@@ -31,7 +31,7 @@ This vignette explains:
 Let $\tau$ denote the common treatment time. The method estimates the forecasted average treatment effect at horizon $h$ as:
 
 $$
-\widehat{FAT_h} := \frac{1}{n} \sum_{i \in n} [Y_{i \tau + h} - \widehat{Y}_{i \tau + h}(0)]
+\widehat{FAT_h} := \frac{1}{n} \sum_{i \in n} [Y_{i \tau + h} - \widehat{Y}_{i \tau + h}(0)] \tag{1}
 $$
 where:
 
@@ -51,7 +51,7 @@ The counterfactual $\widehat{y}_{i, \tau + h}(0)$ is constructed using a **basis
 
 
 $$
-\widehat{y}_{i \tau + h}(0) = \sum_{k=0}^{q_i} \widehat{c}_{ik}^{(q_i, R_i)} (\tau + h)^k
+\widehat{y}_{i \tau + h}^{(q_i, R_i)}(0) = \sum_{k=0}^{q_i} \widehat{c}_{ik}^{(q_i, R_i)} (\tau + h)^k \tag{2}
 $$
 
 Where:
@@ -63,23 +63,21 @@ Where:
 The coefficients $\widehat{c}_i = (\widehat{c}_{i0}, ..., \widehat{c}_{iq_i})$ are estimated by minimizing the squared error over the pre-treatment window $T_i = \{\tau - R_i + 1, ..., \tau\}$:
 
 $$
-\widehat{c}^{(q_i, R_i)}_i = \arg\min_{c \in \mathbb{R}^{q_i+1}} \sum_{t \in T_i} \left(y_{it} - \sum_{k=0}^{q_i} c_k t^k\right)^2
+\widehat{c}^{(q_i, R_i)}_i = \arg\min_{c \in \mathbb{R}^{q_i+1}} \sum_{t \in T_i} \left(y_{it} - \sum_{k=0}^{q_i} c_k t^k\right)^2 \tag{3}
 $$
 
 
 ### Side note: the proper equations (delete this if not needed)
-
-
 The fitted forecast is:
 
 $$
-\widehat{y}^{(q_i, R_i)}_{i, \tau + h}(0) := \sum_{k=0}^{q_i} \widehat{c}^{(q_i, R_i)}_{ik} \cdot b_k(\tau + h)
+\widehat{y}^{(q_i, R_i)}_{i \tau + h}(0) := \sum_{k=0}^{q_i} \widehat{c}^{(q_i, R_i)}_{ik} \cdot b_k(\tau + h) \tag{2.1}
 $$
 
 The coefficients are estimated by:
 
 $$
-\widehat{c}^{(q_i, R_i)}_i := \arg\min_{c \in \mathbb{R}^{q_i + 1}} \sum_{t \in T_i} \left( y_{it} - \sum_{k=0}^{q_i} c_k b_k(t) \right)^2
+\widehat{c}^{(q_i, R_i)}_i := \arg\min_{c \in \mathbb{R}^{q_i + 1}} \sum_{t \in T_i} \left( y_{it} - \sum_{k=0}^{q_i} c_k b_k(t) \right)^2 \tag{3.1}
 $$
 
 ### 1.2 Theoretical Justification
@@ -98,24 +96,17 @@ Thus, polynomial regressions of modest order (e.g., $q_i = 0, 1, 2, 3$) offer a 
 Polynomial basis functions $b_k(t) = t^k$ are used by default.
 
 
-### Practical Advice
-
-- Choose $q_i$ (polynomial degree) based on data visualization. Use 0 for constant trend, 1 for linear, etc.
-- Choose $R_i$ (length of pre-treatment window) large enough to estimate $q_i + 1$ coefficients, but not too large if trends are unstable.
-
 
 ### Assumptions and Key Features
 
 - **Forecast Unbiasedness**: Counterfactual forecasts must be unbiased on average.
 - **Weak Dependence**: Forecast errors must satisfy a central limit theorem.
-- **Basis Function Forecasting**: Forecasts are based on regressions using basis functions (e.g., polynomials).
 - **Short Panel**: Identification and inference do not require long time series. 
 
 
 ### Practical Advice
-
-- Plot pre-treatment series to visually assess trends.
-  - Pick degree = 0 if flat, 1 if linear, etc.
+- Choose $q_i$ (polynomial degree) based on data visualization. Use 0 for constant trend, 1 for linear, etc.
+- Choose $R_i$ (length of pre-treatment window) large enough to estimate $q_i + 1$ coefficients, but not too large if trends are unstable.
 - Placebo checks: Apply the FAT estimator to fake horizons **before** treatment. If estimates are near zero, that supports the unbiasedness assumption.
 - Be cautious: this baseline case does not account for:
   - Common unforecastable shocks,
@@ -141,7 +132,6 @@ The function `estimate_fat()` fits a polynomial trend to pre-treatment data, for
 
 
 
-
 ## Model Extensions:
 
 The FAT estimator can be extended to handle more complex scenarios:
@@ -149,16 +139,16 @@ The FAT estimator can be extended to handle more complex scenarios:
 
 ## 2.1 Covariates with Homogeneous Coefficients (Model-Based FAT)
 
-To incorporate additional covariates $x_{it}$ (e.g., policy drivers, controls), assume:
+To incorporate additional covariates $x_{it}$ (e.g., policy drivers, controls), we forecast assume:
 
 $$
-y_{it}(0) = x_{it}' \beta + \sum_{k=0}^{q_i} c_{ik} t^k + \varepsilon_{it} \tag{16}
+y_{it}(0) = x_{it}' \beta + \sum_{k=0}^{q_i} c_{ik} t^k + \varepsilon_{it} \tag{4}
 $$
 
 The coefficients $\beta$ are common across units, while $c_{ik}$ remain unit-specific. The forecast becomes:
 
 $$
-\widehat{y}_{i,\tau + h}(0) = x_{i,\tau + h}' \widehat{\beta} + \sum_{k=0}^{q_i} \widehat{c}_{ik} (\tau + h)^k
+\widehat{y}_{i \tau + h}^{(q_i, R_i)}(0) = x_{i \tau + h}' \widehat{\beta} + \sum_{k=0}^{q_i} \widehat{c}_{ik} (\tau + h)^k \tag{5}
 $$
 
 Where $\widehat{c}_i$ are obtained by regressing $y_{it} - x_{it}'\widehat{\beta}$ on $\{t^k\}$ over $t \in T_i$. The $\widehat{\beta}$ can be estimated using pooled OLS or IV (see below).
@@ -166,7 +156,7 @@ Where $\widehat{c}_i$ are obtained by regressing $y_{it} - x_{it}'\widehat{\beta
 This is implemented in the package using `beta_estimator = "ols"` or `"iv"`.
 
 ### Use Case
-Use this when some covariates (e.g. lagged outcomes, instruments, or exogenous controls) explain common dynamics.
+Use this when some covariates (e.g. exogenous controls, lagged outcomes, or instruments) explain common dynamics.
 
 ### Requirements
 - $x_{it}$ must be observed in all periods.
@@ -180,8 +170,9 @@ When units are highly heterogeneous, it may be inappropriate to pool data. The p
 The model is:
 
 $$
-y_{it}(0) = \sum_{k=0}^{q_i} c_{ik} t^k + \varepsilon_{it}
+y_{i \tau + 1}^{(q_i, R_i)}(0) = \sum_{k=0}^{q_i} c_{ik}^{(q_i, R_i)} (\tau + 1)^k + \widehat{\beta}^{(i)} x_{i \tau + 1} \tag{6}
 $$
+where $\widehat{\beta}_i$ is the unit-specific coefficient vector estimated from the pre-treatment data.
 
 This is the default behavior if `beta_estimator = "unitwise"`.
 
@@ -194,7 +185,7 @@ Use when units have idiosyncratic dynamics, especially when time series are long
 Some common shocks may affect all units post-treatment. If untreated units are available, we can estimate a differential FAT:
 
 $$
-DFAT_h := FAT_h^{treated} - FAT_h^{control}
+DFAT_h := FAT_h^{treated} - FAT_h^{control} \tag{7}
 $$
 
 The forecast models are fitted separately for both treated and untreated units, and their average deviations from observed outcomes are differenced.
