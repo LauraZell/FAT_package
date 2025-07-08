@@ -42,132 +42,253 @@ This estimator does not require a control group. Instead, the counterfactual $\w
 
 ### 1.1 Forecasting the Counterfactual
 
-The counterfactual $\widehat{y}_{i, \tau + h}(0)$ is constructed using a **basis function regression** fit to the $R_i$ periods prior to treatment with $\tau$ denoting the time of the treatment. The method requires specifying:
+To forecast $\widehat{Y}_{i,\tau+h}(0)$, we fit a polynomial time trend model to the unit's pre-treatment outcomes:
 
-- A set of linearly independent basis functions $\{ b_k(t) \}_{k=0}^{q_i}$, here polynomial basis functions $b_k(t) = t^k$ are used by default.
-- The number of basis functions $q_i$
-- The estimation window $T_i = \{ \tau - R_i + 1, \dots, \tau \}$
+Let:
 
+- $T_i = {\tau - R_i + 1, \ldots, \tau}$ be the $R_i$ pre-treatment periods used,
+- $b_k(t) = t^k$ be the $k$-th order basis function (e.g., $t$, $t^2$, ...),
+- $q_i$ be the chosen polynomial degree.
+
+Then the counterfactual forecast is:
 
 $$
 \widehat{y}_{i \tau + h}^{(q_i, R_i)}(0) = \sum_{k=0}^{q_i} \widehat{c}_{ik}^{(q_i, R_i)} (\tau + h)^k \tag{2}
 $$
 
-The coefficients $\widehat{c}_i = (\widehat{c}_{i0}, ..., \widehat{c}_{iq_i})$ are estimated by minimizing the squared error over the pre-treatment window:
+The coefficients $\widehat{c}_{ik}$ are estimated by minimizing squared residuals on the pre-treatment window:
 
 $$
 \widehat{c}^{(q_i, R_i)}_i = \arg\min_{c \in \mathbb{R}^{q_i+1}} \sum_{t \in T_i} \left(y_{it} - \sum_{k=0}^{q_i} c_k t^k\right)^2 \tag{3}
 $$
+This is a simple ordinary least squares regression of $Y_{it}$ on time and its powers (up to $q_i$), using only periods before treatment.
+
+### 1.2. Interpretation and Implementation
+
+- If $q_i = 0$, the forecast is the mean of pre-treatment outcomes.
+- If $q_i = 1$, we estimate a linear trend.
+- Higher-order $q_i$ allow for quadratic or cubic pre-treatment dynamics.
+
+The choice of $q_i$ and $R_i$ involves a trade-off:
+
+- Smaller $q_i$ → lower variance, but possibly biased if there’s a deterministic trend.
+- Larger $q_i$ → more flexible, but may overfit or inflate standard errors.
+
+In practice, we recommend trying a small set of values: $q_i \in {0, 1, 2, 3}$, and choosing $R_i$ as large as possible unless pre-trends suggest instability.
+
 
 ### 1.2 Theoretical Justification
 
-Under suitable conditions on the data generating process (DGP), the forecast $\widehat{y}_{i, \tau + h}(0)$ is **unbiased on average**, , i.e.: $\mathbb{E}[\widehat{Y}_{i, \tau + h}(0)] = \mathbb{E}[Y_{i, \tau + h}(0)]$, so that the FAT estimator consistently estimates the ATT. 
+Under suitable conditions on the data generating process (DGP), the forecast $\widehat{y}_{i, \tau + h}(0)$ is **unbiased on average**, i.e.: 
+$$
+\mathbb{E}[\widehat{Y}_{i, \tau + h}(0)] = \mathbb{E}[Y_{i, \tau + h}(0)]
+$$
+So the FAT estimator consistently estimates the average treatment effect on the treated (ATT). See Theorems 1 and 2 in Botosaru et al. (2024).
 
-Thus, the FAT estimator consistently estimates ATT. See Theorem 1–2 in Botosaru et al. (2024).
+Specifically:
 
-In particular:
+- If the DGP includes stationary or stochastic trends, any weighted average of pre-treatment outcomes (with weights summing to 1) is unbiased (Theorem 1).
+- If the DGP includes deterministic trends, the basis function regression remains unbiased if the true trend lies in the span of the chosen basis functions, i.e., if $q_i \geq q_{0i}$ (Theorem 2).
 
-- If the DGP includes **stationary or stochastic trends**, any weighted average of pre-treatment outcomes (with weights summing to 1) is unbiased (Theorem 1).
-- If the DGP includes **deterministic trends**, basis function regressions remain unbiased provided the true trend is contained in the span of $\{ b_k(t) \}$ and $q_i \geq q_{0i}$ (Theorem 2).
+This means that polynomial regressions of modest order — for example $q_i = 0, 1, 2, 3$ — are often sufficient to construct theoretically valid counterfactuals.
 
-Thus, polynomial regressions of modest order (e.g., $q_i = 0, 1, 2, 3$) offer a flexible and theoretically valid basis for forecasting the counterfactuals.
+### 1.3 Assumptions and Key Features
 
-#### Assumptions and Key Features
+The key conditions for identification and inference are:
 
-- **Forecast Unbiasedness**: Counterfactual forecasts must be unbiased on average.
-- **Weak Dependence**: Forecast errors must satisfy a central limit theorem.
-- **Short Panel**: Identification and inference do not require long time series. 
-- **Unbiased Forecasts**: A correctly specified model is not necessary to obtain unbiased forecasts of the counterfactuals. 
+- *Forecast Unbiasedness*: Counterfactual forecasts must be unbiased on average.
+- *Weak Dependence*: Forecast errors must satisfy a central limit theorem.
+- *Short Panel*: Long pre-treatment periods are not required — short panels suffice.
+- *No Model Correctness Required*: Forecasts can be unbiased even if the model is misspecified.
 
-#### Practical Advice
-- Choose $q_i$ (polynomial degree) based on data visualization. Use 0 for constant trend, 1 for linear, etc.
-- Choose $R_i$ (length of pre-treatment window) by balancing the desire for small standard errors (large $R_i$) with concerns about structural instability pre-treatment (small $R_i$).
-  - The smallest $R_i$ that allows estimating the polynomial degree $q_i$ is $R_i = q_i + 1$, which is also set as the package default. 
-- Placebo checks: Apply the FAT estimator to a pretend treatment **before** the actual implementation. If estimates are statistically near zero, the unbiasedness assumption cannot be rejected, and there is indication that FAT estimates the causal effect of the treatment.
-- Be cautious: this baseline case does not account for:
-  - Common unforecastable shocks,
-  - covariates (e.g., time-varying factors),
-  - or staggered treatment with anticipation. 
+These assumptions are weaker than those in typical DID or matching frameworks, and they allow for heterogeneity, staggered treatment, and limited pre-period data.
+
+###1.4 Practical Advice
+
+- Choose $q_i$ (polynomial degree) based on visualization of pre-treatment trends:
+
+  - $q_i = 0$ → constant level,
+  - $q_i = 1$ → linear trend,
+  - higher $q_i$ for curvature.
+
+- Choose $R_i$ (length of pre-treatment window) by balancing:
+
+  - desire for precision (larger $R_i$),
+  - risk of trend instability (smaller $R_i$).
+  - The default is $R_i = q_i + 1$, the minimum needed to estimate $q_i$.
+
+- Use placebo checks: Apply the FAT estimator to a pretend treatment period before the actual one. If the placebo effect is near zero, this supports the forecast unbiasedness assumption.
+
+- Note limitations of the baseline case:
+
+  - Does not account for unobserved aggregate shocks,
+  - Ignores covariates,
+
+#### Accounting for Anticipation Effects
+If outcomes respond before formal treatment implementation (e.g., due to anticipation or announcement effects), set $\tau_i$ to the first period of observed outcome change — not necessarily the official treatment date. The FAT method accommodates such redefinitions seamlessly, as long as the pre-treatment forecast window lies entirely before this redefined $\tau_i$. This allows the estimator to remain valid in the presence of early treatment responses.
+
+#### Accommodating Staggered Treatment Timing
+The method also supports staggered adoption, where different units are treated at different times. To account for this, define a unit-specific treatment time $\tau_i$ and estimate forecasts relative to each unit’s own $\tau_i$. The package aligns all estimation in event time, allowing for consistent aggregation of forecast errors across units even when treatment timing varies.
 
 
-## 2. Model-based FAT
+## 2. Model-Based FAT Estimation
 
-The FAT estimator can be extended to handle more complex scenarios. This requires specifying a model for the counterfactuals and imposing additional assumptions.
+In settings where treatment effects may depend on additional observed covariates, the FAT framework can be extended to include model-based counterfactual forecasts. These extensions allow for either homogeneous or heterogeneous covariate effects, but they require stronger assumptions than the baseline FAT.
 
-## 2.1 Homogeneous Coefficients
+The key idea is to augment the trend-based counterfactual model with covariates $x_it$​, either using common (pooled) coefficients or unit-specific slopes.
 
-To incorporate additional covariates $x_{it}$ (e.g., policy drivers, controls), we forecast:
+### 2.1 Homogeneous Coefficients
+
+To incorporate time-varying covariates xitxit​ (e.g., policy drivers or controls), the FAT estimator can be extended to model the counterfactual outcome as:
 
 $$
 \widehat{y}_{h}(\beta, y_i, x_i) = x_{i \tau + h}' \widehat{\beta} + \sum_{k=0}^{q_i} \widehat{c}_{ik} (\tau + h)^k \tag{5}
 $$
+
+The coefficients $\hat{c_i}$ are unit-specific trend parameters, while $\widehat{\beta}$ is a common coefficient vector estimated across units. The estimation proceeds in two steps:
+
+
+**Step 1: Estimate the Common Covariate Effect $\beta$**
+
+The coefficient vector $\beta$ summarizes the influence of observed covariates on the outcome and is assumed to be common across units and time. It can be estimated using:
+
+- Pooled OLS, if covariates are exogenous and consistently measured;
+- or First-Difference IV (FD-IV) methods, when covariates include endogenous variables such as lagged outcomes (as discussed in footnote 21 of Botosaru et al., 2024).
+
+This step is external to the unit-specific forecast and must rely on valid identification assumptions.
+
+
+**Step 2: Forecast Unit-Specific Trends on Covariate-Adjusted Outcomes**
+
+Given an estimate $\widehat{\beta}$, the unit-specific polynomial coefficients $\widehat{c_i}$ are optained by regressing the covariate-adjusted outcomes on basis functions over the pre-treatment window $T_i$:
+
 $$
-\widehat{c_i}^{(q_i, R_i)} = \arg\min_{c \in \mathbb{R}^{q_i + 1}} \sum_{t \in T_i} \left( y_{it} - x_{it}'\widehat{\beta} - \sum_{k=0}^{q_i} t^k c_k \right)^2 \tag{6.1}
+\widehat{c_i}^{(q_i, R_i)} = \arg\min_{c \in \mathbb{R}^{q_i + 1}} \sum_{t \in T_i} \left( y_{it} - x_{it}'\widehat{\beta} - \sum_{k=0}^{q_i} t^k c_k \right)^2 \tag{6}
+$$
+This step recovers the unit-specific residual dynamics that are not explained by the covariates.
+
+
+Use Case
+
+This specification is appropriate when:
+
+- Units are influenced by common shocks or policy drivers,
+- Covariates can be reasonably assumed to have the same effect across units,
+- Including covariates improves the precision of the forecasted counterfactuals.
+
+Requirements and Assumptions
+
+- Covariates $x_it$ must be observed in all pre-treatment periods,
+- the model for $\beta$ must be correctly specified and estimated using a valid method,
+- the polynomial trend must provide an adequate approximation of residual dynamics,
+- unbiasedness of the overall forecast depends on both the accuracy of $\widehat{\beta}$ and the trend specification. 
+
+In the `fatEstimator` package, this option is activated using beta_estimator = "ols" or "iv".
+
+
+### 2.2 Heterogeneous Coefficients 
+
+In highly heterogeneous panels, it may be more appropriate to estimate both the time trend and the covariate effects separately for each unit. The unitwise model relaxes the assumption of shared dynamics and fits a full predictive model for each unit. The forecasted counterfactual is then:
+
+$$
+\widehat{y}_{i \tau + h}^{(q_i, R_i)}(0) := \sum_{k=0}^{q_i} c_{ik}^{(q_i, R_i)} (\tau + h)^k + \widehat{\beta}^{(i)} x_{i \tau + h} \tag{6}
+$$
+For each unit $i$, the coefficients are estimated as:
+
+$$
+(\widehat{c}^{(q_i, R_i)}, \widehat{\beta}^{(i)}) := \arg\min_{c \in \mathbb{R}^{q_i + 1}, \beta \in \mathbb{R}^{p}} \sum_{t \in T_i} \left( y_{it} - \sum_{k=0}^{q_i} c_k t^k - \beta x_{it} \right)^2 \tag{6.1}
 $$
 
-
-The coefficients $\beta$ are common across units, while $c_{ik}$ remain unit-specific. The $\widehat{c}_i$ are obtained by regressing $y_{it} - x_{it}'\widehat{\beta}$ on $\{t^k\}$ over $t \in T_i$. The $\widehat{\beta}$ can be estimated using pooled OLS or IV (see below).
-
-This is implemented in the package using `beta_estimator = "ols"` or `"iv"`.
+This is implemented in the package with `beta_estimator = "unitwise"`.
 
 #### Use Case
-Use this when some covariates (e.g. exogenous controls, lagged outcomes, or instruments) explain common dynamics.
+Choose this option when:
 
-#### Requirements
-- $x_{it}$ must be observed in all periods.
-- Instruments must be supplied if `beta_estimator = "iv"`.
+- Units display idiosyncratic dynamics or structural differences,
+- Pooled estimation may be misleading,
+- You have enough pre-treatment data per unit to estimate covariate effects reliably.
 
+#### Requirements and Assumptions
 
-## 2.2 Heterogeneous Coefficients (Unitwise Estimation)
+- Covariates must be available pre-treatment for each unit.
+- Trend and covariate effects must be identifiable from the data for each unit.
+- Under the following additional stronger assumptions, the model-based FAT is biased, but remains consistent and asymptotically normal:
 
-When units are highly heterogeneous, it may be inappropriate to pool data. The package allows estimating the polynomial trend *separately for each unit* without assuming common slopes.
-
-The model is:
-
-$$
-y_{i \tau + 1}^{(q_i, R_i)}(0) := \sum_{k=0}^{q_i} c_{ik}^{(q_i, R_i)} (\tau + 1)^k + \widehat{\beta}^{(i)} x_{i \tau + 1} \tag{6}
-$$
-
-
-$$
-(\widehat{c}^{(q_i, R_i)}, \hat{\beta}^{(i)} := \arg\min_{c \in \mathbb{R}^{q_i + 1}} \sum_{t \in T_i} \left( y_{it} - \sum_{k=0}^{q_i} c_k t^k - \widehat{\beta} x_{it} \right)^2 \tag{6.1}
-$$
-
-where $\widehat{\beta}_i$ is the unit-specific coefficient vector estimated from the pre-treatment data.
-
-This is the default behavior if `beta_estimator = "unitwise"`.
-
-#### Use Case
-Use when units have idiosyncratic dynamics, especially when time series are long enough to estimate per-unit trends.
+  - correct specification of the model
+  - availability of a consistent estimator for the homogeneous coefficients,
+  - symmetry of the error term for heterogeneous coefficients and covariates that are lagged outcomes. 
 
 
-#### Additional Assumptions
 
-The model-based approach requires stronger assumptions:
 
-- correct specification of the model
-- availability of a consistent estimator for the homogenous coefficients,
-- symmetry of the error term for heterogeneous coefficients and covariates that are lagged outcomes. 
+```{r model-summary-table, echo=FALSE, message=FALSE}
+library(knitr)
 
-Under these additional assumptions, the model-based FAT is biased, but remains consistent and asymptotically normal.
+# Define the tradeoff table
+tradeoff_table <- data.frame(
+  beta_estimator = c('"ols" / "iv"', '"unitwise"'),
+  Coefficients = c("homogeneous", "heterogeneous"),
+  `Suitable` = c("common drivers", "idiosyncratic units"),
+  Assumptions = c("model correctly specified", "sufficient pre-treatment observations")
+)
+
+# Render as kable
+kable(tradeoff_table, align = "lccc", caption = "Summary of Tradeoffs Between Model-Based FAT Estimators")
+```
+
 
 ## 3 Difference-in-FAT (DFAT)
 
-Some common shocks may affect all units post-treatment. If untreated units are available, we can estimate a differential FAT:
+The baseline FAT approach assumes that post-treatment deviations from forecasts reflect the treatment effect. However, if untreated units are available, and common shocks or structural breaks affect all units post-treatment, a comparison to untreated forecasts can help isolate the treatment effect.
+
+The Difference-in-FAT (DFAT) estimator adjusts for such confounding shocks by comparing forecast errors across treated and control groups:
 
 $$
 DFAT_h := FAT_h^{treated} - FAT_h^{control} \tag{7}
 $$
 
-The forecast models are fitted separately for both treated and untreated units, and their average deviations from observed outcomes are differenced.
+This means:
 
-This is implemented by supplying a `treated` column and setting `control_group_value = FALSE`.
+- Forecasts are constructed separately for treated and control units, using only their own pre-treatment data.
+- Deviations from the forecast are computed within each group.
+- The average post-treatment forecast deviation for the control group is subtracted from that of the treated group.
+
+This approach is useful when:
+
+- A valid control group exists, but matching or parallel trends assumptions are not credible.
+- The control group helps account for concurrent policy changes, macroeconomic shifts, or other shocks that were not forecasted.
+
+#### Key Assumptions
+
+To ensure interpretability of DFAT, the following conditions must hold:
+
+- Forecasts must be unbiased on average for both treated and control units.
+- No interference between groups (i.e., the control group is not indirectly affected by the treatment).
+- Treated and control groups face similar structural shocks, so that differencing removes bias.
+
+Note that DFAT does not require the control group to be untreated forever, only that it is untreated during the forecast horizon.
+Implementation in the Package
+
+To use DFAT in the `fatEstimator package`:
+
+- Include a logical treated column in your panel dataset.
+- Specify control_group_value = FALSE to define which units are used as controls.
+- The package fits separate models for each group and computes the difference in FATs post-treatment.
 
 #### Use Case
+
 Use DFAT when:
 
 - External shocks may bias post-treatment outcomes,
-- A control group is available but not suitable for pre-treatment matching.
+- A control group is available but unsuitable for pre-treatment matching or traditional difference-in-differences due to poor common trend support,
+- You want to retain the flexibility of forecast-based counterfactuals, while differencing out structural shocks.
+
+#### Practical Tip
+
+If results differ substantially between FAT and DFAT:
+
+- Consider whether unmodeled shocks are biasing the forecasts,
+- Or whether treatment spillovers invalidate the control group as a counterfactual.
 
 
 ## 4. Package Usage
@@ -178,42 +299,55 @@ Use DFAT when:
 
 ### Application Steps
 
-1. Prepare a long-format dataset with:
-   - unit, time, outcome, treatment year, and optionally covariates.
-2. Call `estimate_fat()` with appropriate arguments.
-3. Interpret:
-   - `results$results`: FAT estimates and standard errors for (degree, horizon),
-   - `results$predictions`: unit-level observed and forecasted values, useful for plotting and diagnostics,
-   - `plot_fat()`: visual summary of FAT,
-   - `plot_fat_dfat_trajectories()`: visualizes the pre- and post-treatment of treated (and if applicable) control units over time.
+1. Prepare your data
+- Your dataset must be in long-format and contain:
+   - a unique unit identifier (e.g., state)
+   - a time variable (e.g., year),
+   - the outcome variable (e.g., a fiscal indicator),
+   - the treatment time (year of intervention) for each unit,
+   - optionally: covariates and a treated column (for DFAT).
+2. Estimate forecasted effects
+  - Call `estimate_fat()` with appropriate arguments for your design. 
+  - Choose the estimator type via `beta_estimator` (see below).
+3. Interpret results:
+   - `fat_results$results`: summary table of FAT estimates and standard errors across degrees and horizons.
+   - `fat_results$predictions`: unit-level observed and predicted values for plotting or diagnostic checks.
+   - `plot_fat()`: standard plot of treatment effects over forecast horizons.
+   - `plot_fat_dfat_trajectories()`: plots average observed and forecasted paths for treated (and control) units.
+
+
+
+### Key user input
+
+To implement the baseline FAT estimator, the researcher must define:
+```{r key_inputs_table, echo=FALSE, message=FALSE}
+knitr::kable(
+  data.frame(
+    Argument = c("unit_var", "time_var", "outcome_var", "treat_time_var",
+                 "degrees", "horizons", "beta_estimator", "control_group_value"),
+    Description = c(
+      "Unique unit identifier (e.g., municipality ID)",
+      "Time index (e.g., year)",
+      "Variable to forecast (e.g., net debt, mortality)",
+      "Treatment adoption year (unit-specific)",
+      "Polynomial degrees for trend fitting (e.g., 0:3)",
+      "Forecast horizons post-treatment (e.g., 1:5)",
+      "\"none\" (default), \"ols\", \"iv\", or \"unitwise\"",
+      "Set to FALSE for DFAT (requires treated column)"
+    )
+  ),
+  caption = "Required arguments for calling `estimate_fat()`.",
+  align = c("l", "l")
+)
+```
 
 ## 5. Simulated Example (to be inserted)
-
 
 ```{r, eval=FALSE}
 # Simulated code here
 ```
 
 
-### Key user input
-
-To implement the baseline FAT estimator, the researcher must define:
-
-- *unit_var*: identifier for each observational unit (e.g., municipality or region).
-- *time_var*: the time dimension (e.g., "year").
-- *outcome_var*: the dependent variable to forecast.
-- *treat_time_var*: treatment adoption year per unit.
-- *degrees*: a vector of polynomial degrees (e.g., 0:2) to fit as pre-trends.
-- *horizons*: a vector of forecast horizons after treatment (e.g., 1:3).
-- *beta_estimator* = "none", "ols", "iv", "unitwise": 
-  - "none" for no covariates,
-  - "ols" for pooled polynomial fit,
-  - "iv" for instrumental variable estimation,
-  - "unitwise" for unit-specific trends.
-
-
 # References
 
 Botosaru, I., Giacomini, R., & Weidner, M. (2024). Forecasted Average Treatment Effects in the Absence of a Control Group. Journal / arXiv, 2024.
-(Ensure correct citation details once journal info is finalized.)
-Paper version used: 2024 working paper. 
