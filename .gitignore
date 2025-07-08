@@ -1,3 +1,5 @@
 .Rproj.user
 Progress-report.html
-Progress-resport.Rmd
+Progress-report.Rmd
+*.html
+vignettes/fat_vignette.html
