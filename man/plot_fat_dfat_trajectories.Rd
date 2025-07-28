@@ -23,8 +23,6 @@ pred_var = "preds") {}
 plot_fat_dfat_trajectories(
   predictions_df,
   mode = c("fat", "dfat"),
-  unit_var = "state",
-  time_var = "Year",
   outcome_var = "ln_age_mort_rate",
   pred_var = "preds"
 )

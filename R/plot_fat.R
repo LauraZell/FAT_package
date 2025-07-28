@@ -241,54 +241,69 @@ plot_fat_dfat_avg_trajectory <- function(predictions_df, mode = c("fat", "dfat")
 #'     )
 #'
 
-
 plot_fat_dfat_trajectories <- function(predictions_df,
                                        mode = c("fat", "dfat"),
-                                       unit_var = "state",
-                                       time_var = "Year",
                                        outcome_var = "ln_age_mort_rate",
                                        pred_var = "preds") {
-
   mode <- match.arg(mode)
 
   library(dplyr)
-  library(tidyr)
   library(ggplot2)
+  library(tidyr)
 
-  # Label group (treated/control or just treated)
+  # Check for required columns
+  required_cols <- c("timeToTreat", "deg", outcome_var, pred_var)
+  if (!all(required_cols %in% names(predictions_df))) {
+    stop("Missing required columns in predictions_df.")
+  }
+
+  # Label group
   if (mode == "dfat") {
-    if (!"treated" %in% names(predictions_df)) stop("DFAT mode requires a 'treated' column.")
+    if (!"treated" %in% names(predictions_df)) {
+      stop("DFAT mode requires a 'treated' column.")
+    }
     predictions_df <- predictions_df %>%
       mutate(group = ifelse(treated == 1, "Treated", "Control"))
   } else {
     predictions_df$group <- "Treated"
   }
 
-  # Create combined trajectory variable (value = observed before treatment, forecast after)
-  plot_df <- predictions_df %>%
-    mutate(
-      value = ifelse(.data[[time_var]] < .data$treat_time_for_fit,
-                     .data[[outcome_var]],
-                     NA_real_),  # observed only before treatment
-      value = ifelse(.data[[time_var]] >= .data$treat_time_for_fit,
-                     .data[[pred_var]],
-                     value)      # forecast only from treatment onward
-    )
+  # Drop hh if present
+  predictions_df <- predictions_df %>% select(-any_of("hh"))
 
-  # Plot: full trajectory (obs + pred) as continuous line
-  ggplot(plot_df, aes(x = .data[[time_var]], y = value, color = group)) +
-    geom_line(aes(group = interaction(.data[[unit_var]], group)), alpha = 0.6) +
-    facet_grid(rows = vars(deg), cols = vars(hh), labeller = label_both) +
-    scale_color_manual(values = c("Treated" = "blue", "Control" = "red")) +
-    scale_x_continuous(breaks = scales::pretty_breaks(n = 10)) +
-    theme_minimal(base_size = 12) +
+  # Build two datasets: observed and forecasted
+  obs_df <- predictions_df %>%
+    mutate(type = "Observed", value = .data[[outcome_var]])
+
+  forecast_df <- predictions_df %>%
+    filter(timeToTreat >= 1) %>%
+    mutate(type = "Forecasted", value = .data[[pred_var]])
+
+  # Combine both
+  plot_df <- bind_rows(obs_df, forecast_df)
+
+  # Aggregate
+  summary_df <- plot_df %>%
+    group_by(group, deg, timeToTreat, type) %>%
+    summarise(value = mean(value, na.rm = TRUE), .groups = "drop")
+
+  # Get unique x-axis ticks
+  time_breaks <- sort(unique(summary_df$timeToTreat))
+
+  # Plot
+  ggplot(summary_df, aes(x = timeToTreat, y = value, color = group, linetype = type)) +
+    geom_line(size = 1.1) +
+    facet_wrap(~ deg, labeller = label_both) +
+    geom_vline(xintercept = 0, linetype = "dashed", color = "gray40") +
+    scale_x_continuous(breaks = time_breaks) +
+    theme_minimal(base_size = 13) +
     theme(legend.position = "bottom") +
     labs(
-      title = paste0(toupper(mode), " Trajectories: Observed + Forecasted"),
-      subtitle = "Connected lines by unit and group; facets by degree and horizon",
-      x = "Year",
+      title = paste0(toupper(mode), " Trajectories: Observed and Forecasted"),
+      subtitle = "Observed: full data. Forecast: from year 1 after treatment",
+      x = "Years relative to treatment (timeToTreat)",
       y = "Outcome",
-      color = "Group"
+      color = "Group",
+      linetype = "Trajectory"
     )
 }
-
