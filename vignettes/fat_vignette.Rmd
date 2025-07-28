@@ -258,6 +258,13 @@ This means:
 - Deviations from the forecast are computed within each group.
 - The average post-treatment forecast deviation for the control group is subtracted from that of the treated group.
 
+
+In DFAT mode, treated and control units are forecast from a common reference year to ensure valid comparison of forecast errors. To do this, the 'fatEstimator' package aligns all units to the median year among the treated units.
+
+Note: If all treated units adopt in the same year, this median-based alignment has no effect—treated and control units are both aligned to the actual treatment year.
+This choice is crucial for avoiding bias. If treated units used their actual adoption year while control units used a shared or arbitrary baseline, the resulting forecast horizons would differ. Such asymmetry would bias the group comparison in Equation (7).
+
+
 Use DFAT when:
 
 - A valid control group exists, but matching or parallel trends assumptions are not credible.
@@ -272,13 +279,13 @@ To ensure interpretability of DFAT, the following conditions must hold:
 - Treated and control groups face similar structural shocks, so that differencing removes bias.
 
 Note that DFAT does not require the control group to be untreated forever, only that it is untreated during the forecast horizon.
-Implementation in the Package
 
 To use DFAT in the `fatEstimator package`:
 
 - Include a logical treated column in your panel dataset.
 - Specify `control_group_value = FALSE` to define which units are used as controls.
 - The package fits separate models for each group and computes the difference in FATs post-treatment.
+
 
 #### Practical Advice
 If results differ substantially between FAT and DFAT:
