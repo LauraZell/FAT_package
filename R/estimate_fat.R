@@ -124,6 +124,13 @@ estimate_fat <- function(data,
         hh = hh
       )
 
+    all_preds <- left_join(
+      all_preds,
+      data %>% select(all_of(c(unit_var, time_var, "timeToTreat"))),
+      by = c(unit_var, time_var)
+    )
+
+
     # # Compute outcome difference at the treatment + hh year
     # target_data <- dplyr::filter(all_preds, .data[[time_var]] == (.data$treat_time_for_fit + hh)) %>%
     #   dplyr::mutate(diff = .data[[outcome_var]] - preds)
@@ -225,6 +232,7 @@ estimate_fat <- function(data,
 
   summary_df <- purrr::map_dfr(results_list, "summary")
   preds_df <- purrr::map_dfr(results_list, "predictions", .id = "combo_id")
+  preds_df <- preds_df %>% select(-hh)
 
   return(list(results = summary_df, predictions = preds_df))
 }
