@@ -29,7 +29,10 @@ fit_unitwise_trend <- function(data,
                                outcome_var,
                                treat_time_var,
                                covariate_vars = NULL,
-                               beta_hat = NULL) {
+                               beta_hat = NULL,
+                               forecast_from_treatment_year = FALSE,
+                               pretreatment_window = c("full", "minimal")) {
+  pretreatment_window <- match.arg(pretreatment_window)
   # Filter data to the unit of interest
   unit_data <- data[data[[unit_var]] == unit, ]
 
@@ -55,8 +58,17 @@ fit_unitwise_trend <- function(data,
   }
 
   # Keep only pre-treatment data for estimation
-  pre_data <- subset(unit_data, timeToTreat < 0)
-  if (nrow(pre_data) < degree + 1) return(data.frame())  # Too few obs.
+  if (pretreatment_window == "minimal") {
+    pre_data <- subset(unit_data, timeToTreat < 0)
+    pre_data <- dplyr::arrange(pre_data, desc(timeToTreat)) %>% head(degree + 1)
+  } else {
+    pre_data <- subset(unit_data, timeToTreat < 0)
+  }
+
+  if (nrow(pre_data) <= degree) {
+    warning(paste("Unit", unit, "has too few pre-treatment observations for degree =", degree))
+  }
+
 
   # Create regression formula (e.g. adjusted_outcome ~ ttreat1 + ttreat2)
   rhs_terms <- paste0("ttreat", 1:degree)
@@ -65,12 +77,13 @@ fit_unitwise_trend <- function(data,
 
   # Fit model on pre-treatment data
   model <- lm(formula, data = pre_data)
+  print(summary(model))
 
   # Create empty preds
   unit_data$preds <- NA_real_
 
   # Predict only for post-treatment periods (timeToTreat >= 0)
-  post_data <- subset(unit_data, timeToTreat >= 0)
+  post_data <- subset(unit_data, timeToTreat >= if (forecast_from_treatment_year) 0 else 1)
   preds <- predict(model, newdata = post_data)
 
   # Fill in predictions only for post-treatment years

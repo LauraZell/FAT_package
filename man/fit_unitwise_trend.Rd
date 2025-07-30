@@ -13,7 +13,9 @@ fit_unitwise_trend(
   outcome_var,
   treat_time_var,
   covariate_vars = NULL,
-  beta_hat = NULL
+  beta_hat = NULL,
+  forecast_from_treatment_year = FALSE,
+  pretreatment_window = c("full", "minimal")
 )
 }
 \arguments{

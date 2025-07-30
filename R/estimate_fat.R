@@ -21,6 +21,8 @@
 #' @param max_iv_lag Maximum lag for IV estimation (if used).
 #' @param control_group_value Optional. If set (e.g., control_group_value = FALSE), DFAT mode is activated.
 #'                            Treated units are expected to be marked in a "treated" column (TRUE/FALSE).
+#' @param forecast_from_treatment_year Logical. If TRUE, predictions start from the adoption year (timeToTreat = 0);
+#'                                     if FALSE, predictions start from the year after adoption (timeToTreat = 1). Default is FALSE.
 #'
 #' @return A list with:
 #' \describe{
@@ -43,7 +45,10 @@ estimate_fat <- function(data,
                          beta_estimator = c("none", "ols", "iv", "unitwise"),
                          min_iv_lag = 2,
                          max_iv_lag = 2,
-                         control_group_value = NULL) {
+                         control_group_value = NULL,
+                         forecast_from_treatment_year = FALSE,
+                         pretreatment_window = c("full", "minimal")) {
+  pretreatment_window <- match.arg(pretreatment_window)
 
   # Match estimator option
   beta_estimator <- match.arg(beta_estimator)
@@ -100,12 +105,18 @@ estimate_fat <- function(data,
       purrr::map_df(~ {
         if (beta_estimator == "unitwise") {
           fit_unitwise_trend(data, .x, deg, unit_var, time_var, outcome_var,
-                             "treat_time_for_fit", covariate_vars)
+                             "treat_time_for_fit", covariate_vars,
+                             beta_hat = NULL,
+                             pretreatment_window = pretreatment_window,
+                             forecast_from_treatment_year = forecast_from_treatment_year)
         } else {
           fit_common_trend(data, .x, deg, unit_var, time_var, outcome_var,
-                           "treat_time_for_fit", covariate_vars, beta_hat)
+                           "treat_time_for_fit", covariate_vars, beta_hat,
+                           pretreatment_window = pretreatment_window,
+                           forecast_from_treatment_year = forecast_from_treatment_year)
         }
       })
+
 
     # For DFAT: Merge treatment indicator back (used only in post-treatment comparison)
     if (dfat_mode) {

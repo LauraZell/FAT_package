@@ -24,7 +24,10 @@ fit_common_trend <- function(data,
                              outcome_var,
                              treat_time_var,
                              covariate_vars = NULL,
-                             beta_hat = NULL) {
+                             beta_hat = NULL,
+                             forecast_from_treatment_year = FALSE,
+                             pretreatment_window = c("full", "minimal")) {
+  pretreatment_window <- match.arg(pretreatment_window)
 
   # Subset data for this unit
   unit_data <- data[data[[unit_var]] == unit, ]
@@ -62,8 +65,17 @@ fit_common_trend <- function(data,
   }
 
   # Fit model to pre-treatment data only
-  pre_data <- subset(unit_data, timeToTreat < 0)
-  if (nrow(pre_data) < degree + 1) return(data.frame())  # Not enough pre-treatment points
+  if (pretreatment_window == "minimal") {
+    pre_data <- subset(unit_data, timeToTreat < 0)
+    pre_data <- dplyr::arrange(pre_data, desc(timeToTreat)) %>% head(degree + 1)
+  } else {
+    pre_data <- subset(unit_data, timeToTreat < 0)
+  }
+
+  if (nrow(pre_data) <= degree) {
+    warning(paste("Unit", unit, "has too few pre-treatment observations for degree =", degree))
+  }
+
 
   # Build formula using polynomial time trend terms
   rhs_terms <- paste0("ttreat", 1:degree)
@@ -72,10 +84,15 @@ fit_common_trend <- function(data,
 
   # Fit model on pre-treatment data
   model <- lm(formula, data = pre_data)
+  print(paste("Fitting model for unit:", unit, "with degree:", degree))
+  print(summary(model))
 
   # ==== Predict only for post-treatment years ====
-  post_data <- subset(unit_data, timeToTreat >= 0)
+  post_data <- subset(unit_data, timeToTreat >= if (forecast_from_treatment_year) 0 else 1)
   post_data$preds <- predict(model, newdata = post_data)
+
+  print(post_data)
+  print(post_data$preds)
 
   # Re-add covariate contribution if previously subtracted
   if (!is.null(beta_hat) && !is.null(covariate_vars)) {

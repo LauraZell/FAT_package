@@ -19,7 +19,9 @@ estimate_fat(
   beta_estimator = c("none", "ols", "iv", "unitwise"),
   min_iv_lag = 2,
   max_iv_lag = 2,
-  control_group_value = NULL
+  control_group_value = NULL,
+  forecast_from_treatment_year = FALSE,
+  pretreatment_window = c("full", "minimal")
 )
 }
 \arguments{
@@ -53,6 +55,9 @@ estimate_fat(
 
 \item{control_group_value}{Optional. If set (e.g., control_group_value = FALSE), DFAT mode is activated.
 Treated units are expected to be marked in a "treated" column (TRUE/FALSE).}
+
+\item{forecast_from_treatment_year}{Logical. If TRUE, predictions start from the adoption year (timeToTreat = 0);
+if FALSE, predictions start from the year after adoption (timeToTreat = 1). Default is FALSE.}
 }
 \value{
 A list with:
