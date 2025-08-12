@@ -11,7 +11,8 @@ fit_common_beta_ols(
   treat_time_var,
   time_var,
   unit_var,
-  degree = 0
+  degree = 0,
+  pretreatment_window = c("full", "minimal")
 )
 }
 \arguments{

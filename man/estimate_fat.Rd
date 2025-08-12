@@ -20,7 +20,7 @@ estimate_fat(
   min_iv_lag = 2,
   max_iv_lag = 2,
   control_group_value = NULL,
-  forecast_from_treatment_year = FALSE,
+  forecast_lag = 0,
   pretreatment_window = c("full", "minimal")
 )
 }
@@ -56,8 +56,13 @@ estimate_fat(
 \item{control_group_value}{Optional. If set (e.g., control_group_value = FALSE), DFAT mode is activated.
 Treated units are expected to be marked in a "treated" column (TRUE/FALSE).}
 
-\item{forecast_from_treatment_year}{Logical. If TRUE, predictions start from the adoption year (timeToTreat = 0);
-if FALSE, predictions start from the year after adoption (timeToTreat = 1). Default is FALSE.}
+\item{forecast_lag}{Number of periods to wait after treatment before forecasting begins.
+Default is 0 (forecast starts in treatment year).}
+
+\item{pretreatment_window}{Character. Defines how much pre-treatment data to use for trend fitting:
+"full" uses all pre-treatment years (\code{timeToTreat < 0});
+"minimal" uses only the minimum number of years required by the polynomial degree.
+Default is "full".}
 }
 \value{
 A list with:

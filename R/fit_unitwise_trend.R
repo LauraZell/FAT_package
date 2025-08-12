@@ -17,6 +17,9 @@
 #' @param treat_time_var Name of the treatment time variable (string).
 #' @param covariate_vars Optional character vector of covariate names.
 #' @param beta_hat Optional named vector of pooled covariate coefficients.
+#' @param forecast_lag Number of periods to wait after treatment before forecasting begins.
+#'        Default is 0 (forecast starts in treatment year).
+#' @param pretreatment_window Character. Either "full" to use all available pre-treatment observations, or "minimal" to use exactly (degree + 1) most recent ones.
 #'
 #' @return A data frame with unit, time, outcome, predicted values (`preds`),
 #'         and treatment time.
@@ -28,9 +31,10 @@ fit_unitwise_trend <- function(data,
                                time_var,
                                outcome_var,
                                treat_time_var,
+                               hh,
                                covariate_vars = NULL,
                                beta_hat = NULL,
-                               forecast_from_treatment_year = FALSE,
+                               forecast_lag = 0,
                                pretreatment_window = c("full", "minimal")) {
   pretreatment_window <- match.arg(pretreatment_window)
   # Filter data to the unit of interest
@@ -79,23 +83,34 @@ fit_unitwise_trend <- function(data,
   model <- lm(formula, data = pre_data)
   print(summary(model))
 
-  # Create empty preds
-  unit_data$preds <- NA_real_
+  # New: restrict to horizon hh
+  post_data <- subset(unit_data,
+                      timeToTreat >= forecast_lag &
+                        timeToTreat <= forecast_lag + hh - 1)
 
-  # Predict only for post-treatment periods (timeToTreat >= 0)
-  post_data <- subset(unit_data, timeToTreat >= if (forecast_from_treatment_year) 0 else 1)
   preds <- predict(model, newdata = post_data)
 
   # Fill in predictions only for post-treatment years
-  unit_data$preds[unit_data$timeToTreat >= 0] <- preds
+  unit_data$preds <- NA_real_
+  unit_data$preds[unit_data$timeToTreat %in% post_data$timeToTreat] <- preds
 
   # Re-add covariate effects if subtracted
   if (!is.null(beta_hat) && !is.null(covariate_vars)) {
-    unit_data$preds[unit_data$timeToTreat >= 0] <-
-      unit_data$preds[unit_data$timeToTreat >= 0] +
-      covariate_effect[unit_data$timeToTreat >= 0]
+    post_idx <- unit_data$timeToTreat >= forecast_lag
+    unit_data$preds[post_idx] <- unit_data$preds[post_idx] + covariate_effect[post_idx]
+
   }
 
-  # Return relevant columns
-  return(unit_data[, c(unit_var, time_var, outcome_var, "preds", treat_time_var)])
+  # Add timeToTreat again (in case subset removed it), and compute hh indicator
+  unit_data$timeToTreat <- unit_data[[time_var]] - unit_data[[treat_time_var]]
+
+  unit_data$hh <- dplyr::if_else(
+    unit_data$timeToTreat >= forecast_lag & unit_data$timeToTreat <= forecast_lag + hh - 1,
+    unit_data$timeToTreat - forecast_lag + 1L,
+    0L
+  )
+
+  # Return all years with preds (only filled for post-treatment forecast horizon)
+  return(unit_data[, c(unit_var, time_var, outcome_var, "preds", treat_time_var, "timeToTreat", "hh")])
+
 }

@@ -12,9 +12,10 @@ fit_unitwise_trend(
   time_var,
   outcome_var,
   treat_time_var,
+  hh,
   covariate_vars = NULL,
   beta_hat = NULL,
-  forecast_from_treatment_year = FALSE,
+  forecast_lag = 0,
   pretreatment_window = c("full", "minimal")
 )
 }
@@ -36,6 +37,11 @@ fit_unitwise_trend(
 \item{covariate_vars}{Optional character vector of covariate names.}
 
 \item{beta_hat}{Optional named vector of pooled covariate coefficients.}
+
+\item{forecast_lag}{Number of periods to wait after treatment before forecasting begins.
+Default is 0 (forecast starts in treatment year).}
+
+\item{pretreatment_window}{Character. Either "full" to use all available pre-treatment observations, or "minimal" to use exactly (degree + 1) most recent ones.}
 }
 \value{
 A data frame with unit, time, outcome, predicted values (\code{preds}),

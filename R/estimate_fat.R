@@ -21,8 +21,12 @@
 #' @param max_iv_lag Maximum lag for IV estimation (if used).
 #' @param control_group_value Optional. If set (e.g., control_group_value = FALSE), DFAT mode is activated.
 #'                            Treated units are expected to be marked in a "treated" column (TRUE/FALSE).
-#' @param forecast_from_treatment_year Logical. If TRUE, predictions start from the adoption year (timeToTreat = 0);
-#'                                     if FALSE, predictions start from the year after adoption (timeToTreat = 1). Default is FALSE.
+#' @param forecast_lag Number of periods to wait after treatment before forecasting begins.
+#'        Default is 0 (forecast starts in treatment year).
+#' @param pretreatment_window Character. Defines how much pre-treatment data to use for trend fitting:
+#'                            "full" uses all pre-treatment years (`timeToTreat < 0`);
+#'                            "minimal" uses only the minimum number of years required by the polynomial degree.
+#'                            Default is "full".
 #'
 #' @return A list with:
 #' \describe{
@@ -46,7 +50,7 @@ estimate_fat <- function(data,
                          min_iv_lag = 2,
                          max_iv_lag = 2,
                          control_group_value = NULL,
-                         forecast_from_treatment_year = FALSE,
+                         forecast_lag = 0,
                          pretreatment_window = c("full", "minimal")) {
   pretreatment_window <- match.arg(pretreatment_window)
 
@@ -86,8 +90,16 @@ estimate_fat <- function(data,
     # If covariates + pooled estimation selected, compute beta
     if (!is.null(covariate_vars) && beta_estimator != "none") {
       if (beta_estimator == "ols") {
-        beta_hat <- fit_common_beta_ols(data, outcome_var, covariate_vars, time_var,
-                                        "treat_time_for_fit", unit_var, deg)
+        beta_hat <- fit_common_beta_ols(
+          data = data,
+          outcome_var = outcome_var,
+          covariate_vars = covariate_vars,
+          time_var = time_var,
+          treat_time_var = "treat_time_for_fit",
+          unit_var = unit_var,
+          deg = deg,
+          pretreatment_window = pretreatment_window)
+
       } else if (beta_estimator == "iv") {
         beta_hat <- fit_common_beta_iv(data, outcome_var, covariate_vars, time_var,
                                        "treat_time_for_fit", unit_var, deg, min_iv_lag, max_iv_lag)
@@ -104,16 +116,35 @@ estimate_fat <- function(data,
     all_preds <- unique(data[[unit_var]]) %>%
       purrr::map_df(~ {
         if (beta_estimator == "unitwise") {
-          fit_unitwise_trend(data, .x, deg, unit_var, time_var, outcome_var,
-                             "treat_time_for_fit", covariate_vars,
-                             beta_hat = NULL,
-                             pretreatment_window = pretreatment_window,
-                             forecast_from_treatment_year = forecast_from_treatment_year)
+          fit_unitwise_trend(
+            data = data,
+            unit = .x,
+            degree = deg,
+            unit_var = unit_var,
+            time_var = time_var,
+            outcome_var = outcome_var,
+            treat_time_var = "treat_time_for_fit",
+            covariate_vars = covariate_vars,
+            beta_hat = NULL,
+            forecast_lag = forecast_lag,
+            pretreatment_window = pretreatment_window,
+            hh = hh
+          )
         } else {
-          fit_common_trend(data, .x, deg, unit_var, time_var, outcome_var,
-                           "treat_time_for_fit", covariate_vars, beta_hat,
-                           pretreatment_window = pretreatment_window,
-                           forecast_from_treatment_year = forecast_from_treatment_year)
+          fit_common_trend(
+            data = data,
+            unit = .x,
+            degree = deg,
+            unit_var = unit_var,
+            time_var = time_var,
+            outcome_var = outcome_var,
+            treat_time_var = "treat_time_for_fit",
+            covariate_vars = covariate_vars,
+            beta_hat = beta_hat,
+            forecast_lag = forecast_lag,
+            pretreatment_window = pretreatment_window,
+            hh = hh
+          )
         }
       })
 
@@ -127,28 +158,26 @@ estimate_fat <- function(data,
       )
     }
 
-    # Add meta info and new variable for actual forecast year (used for plotting)
+    # Add meta info (deg, hh) and filter by forecast horizon
     all_preds <- all_preds %>%
       dplyr::mutate(
-        forecast_year = .data$treat_time_for_fit + hh,
         deg = deg,
-        hh = hh
-      )
-
-    all_preds <- left_join(
-      all_preds,
-      data %>% select(all_of(c(unit_var, time_var, "timeToTreat"))),
-      by = c(unit_var, time_var)
-    )
+        hh = hh,
+      ) %>%
+      dplyr::select(all_of(c(unit_var, time_var, outcome_var, "preds", "treat_time_for_fit", "deg", "timeToTreat", "hh")))
 
 
-    # # Compute outcome difference at the treatment + hh year
-    # target_data <- dplyr::filter(all_preds, .data[[time_var]] == (.data$treat_time_for_fit + hh)) %>%
-    #   dplyr::mutate(diff = .data[[outcome_var]] - preds)
+    all_preds$hh <- ifelse(all_preds$timeToTreat >= forecast_lag &
+                             all_preds$timeToTreat <= forecast_lag + hh - 1,
+                           hh, 0)
 
-    # Keep only forecast horizon
-    target_data <- dplyr::filter(all_preds, .data[[time_var]] == forecast_year) %>%
+
+    # Keep only forecast horizon data (predictions made within [lag, lag + hh - 1])
+    target_data <- dplyr::filter(all_preds,
+                                 timeToTreat >= forecast_lag,
+                                 timeToTreat <= forecast_lag + hh - 1) %>%
       dplyr::mutate(diff = .data[[outcome_var]] - preds)
+
 
     # ===================== DFAT logic =====================
     if (dfat_mode) {
@@ -215,35 +244,10 @@ estimate_fat <- function(data,
   # Generate all (degree, horizon) combinations
   combos <- base::expand.grid(deg = degrees, hh = horizons)
 
-  # # Run main function over all combos
-  # results_list <- purrr::pmap(combos, ~ fat_for_combo(..1, ..2))
-  #
-  # # Separate summary and predictions
-  # summary_df <- purrr::map_dfr(results_list, "summary")
-  # preds_list <- purrr::map(results_list, "preds")
-  # all_predictions <- dplyr::bind_rows(preds_list, .id = "combo_id")
-  #
-  # return(list(results = summary_df, predictions = all_predictions))
-  #}
-
-
-#   # Estimate and collect all results
-#   results <- purrr::pmap_dfr(combos, ~ fat_for_combo(..1, ..2))
-#
-#   # 🔧 Re-attach all predictions for plotting (bind them together)
-#   all_preds <- purrr::map_dfr(attr(results, "row.names"), function(i) {
-#     attr(results[i, ], "predictions")
-#   })
-#   attr(results, "predictions") <- all_preds
-#
-#   return(results)
-# }
-
   results_list <- purrr::pmap(combos, fat_for_combo)
 
   summary_df <- purrr::map_dfr(results_list, "summary")
   preds_df <- purrr::map_dfr(results_list, "predictions", .id = "combo_id")
-  preds_df <- preds_df %>% select(-hh)
 
   return(list(results = summary_df, predictions = preds_df))
 }

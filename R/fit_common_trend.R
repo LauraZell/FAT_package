@@ -13,6 +13,9 @@
 #' @param degree Degree of the polynomial used for fitting (integer).
 #' @param covariate_vars Optional character vector of covariate names.
 #' @param beta_hat Optional named vector of estimated coefficients for covariates.
+#' @param forecast_lag Number of periods to wait after treatment before forecasting begins.
+#'        Default is 0 (forecast starts in treatment year).
+#' @param pretreatment_window Character. Either "full" to use all available pre-treatment observations, or "minimal" to use exactly (degree + 1) most recent ones.
 #'
 #' @return A data frame with original outcome, prediction, and treatment time.
 #' @export
@@ -23,9 +26,10 @@ fit_common_trend <- function(data,
                              time_var,
                              outcome_var,
                              treat_time_var,
+                             hh,
                              covariate_vars = NULL,
                              beta_hat = NULL,
-                             forecast_from_treatment_year = FALSE,
+                             forecast_lag = 0,
                              pretreatment_window = c("full", "minimal")) {
   pretreatment_window <- match.arg(pretreatment_window)
 
@@ -76,6 +80,27 @@ fit_common_trend <- function(data,
     warning(paste("Unit", unit, "has too few pre-treatment observations for degree =", degree))
   }
 
+  # Required number of observations depends on window type
+  required_n <- if (pretreatment_window == "minimal") {
+    degree + 1 + if (!is.null(covariate_vars)) length(covariate_vars) else 0
+  } else {
+    1  # allow fewer if "full", but still needs at least one row
+  }
+
+  if (nrow(pre_data) < required_n) {
+    warning(paste("Skipping unit:", unit, "due to insufficient pre-treatment observations."))
+    return(dplyr::tibble(
+      !!unit_var := unit,
+      !!time_var := NA_integer_,
+      !!outcome_var := NA_real_,
+      preds = NA_real_,
+      treat_time_for_fit = NA_real_,
+      timeToTreat = NA_real_,
+      deg = degree,
+      hh = hh
+    ))
+  }
+
 
   # Build formula using polynomial time trend terms
   rhs_terms <- paste0("ttreat", 1:degree)
@@ -88,7 +113,11 @@ fit_common_trend <- function(data,
   print(summary(model))
 
   # ==== Predict only for post-treatment years ====
-  post_data <- subset(unit_data, timeToTreat >= if (forecast_from_treatment_year) 0 else 1)
+  # New: restrict to horizon hh
+  post_data <- subset(unit_data,
+                      timeToTreat >= forecast_lag &
+                        timeToTreat <= forecast_lag + hh - 1)
+
   post_data$preds <- predict(model, newdata = post_data)
 
   print(post_data)
@@ -102,9 +131,20 @@ fit_common_trend <- function(data,
   }
 
   # ==== Merge predictions back into full unit_data ====
-  unit_data$preds <- NA  # default NA
-  unit_data[unit_data$timeToTreat >= 0, "preds"] <- post_data$preds
+  unit_data$preds <- NA_real_
+  unit_data$preds[unit_data$timeToTreat %in% post_data$timeToTreat] <- post_data$preds
 
-  # Return full dataset with only post-treatment preds filled
-  return(unit_data[, c(unit_var, time_var, outcome_var, "preds", treat_time_var)])
+
+  # Add timeToTreat again (in case subset removed it), and compute hh indicator
+  unit_data$timeToTreat <- unit_data[[time_var]] - unit_data[[treat_time_var]]
+
+  unit_data$hh <- dplyr::if_else(
+    unit_data$timeToTreat >= forecast_lag & unit_data$timeToTreat <= forecast_lag + hh - 1,
+    unit_data$timeToTreat - forecast_lag + 1L,
+    0L
+  )
+
+  # Return all years with preds (only filled for post-treatment forecast horizon)
+  return(unit_data[, c(unit_var, time_var, outcome_var, "preds", treat_time_var, "timeToTreat", "hh")])
+
 }

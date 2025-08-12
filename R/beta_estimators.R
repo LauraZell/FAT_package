@@ -16,9 +16,18 @@ fit_common_beta_ols <- function(data,
                                 treat_time_var,
                                 time_var,
                                 unit_var,
-                                degree = 0) {
+                                degree = 0,
+                                pretreatment_window = c("full", "minimal")) {
+  pretreatment_window <- match.arg(pretreatment_window)
+
   # Add time_to_treat
   data <- dplyr::mutate(data, time_to_treat = .data[[time_var]] - .data[[treat_time_var]])
+
+  data <- if (pretreatment_window == "minimal") {
+    dplyr::filter(data, time_to_treat <= 0 & time_to_treat >= -degree)
+  } else {
+    dplyr::filter(data, time_to_treat < 0)
+  }
 
   # Filter to pre-treatment window
   data <- dplyr::filter(data, time_to_treat <= 0 & time_to_treat >= -degree)
