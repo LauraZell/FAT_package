@@ -6,28 +6,29 @@
 \usage{
 fit_common_beta_iv(
   data,
-  covariate_vars,
   outcome_var,
+  covariate_vars,
+  treat_time_var,
   time_var,
   unit_var,
-  treat_time_var,
   min_iv_lag = 2,
   max_iv_lag = 2,
-  degree = 0
+  degree = 0,
+  pretreatment_window = c("full", "minimal")
 )
 }
 \arguments{
 \item{data}{A data.frame with panel structure.}
 
+\item{outcome_var}{Name of the outcome variable.}
+
 \item{covariate_vars}{Character vector of exogenous covariate names.}
 
-\item{outcome_var}{Name of the outcome variable.}
+\item{treat_time_var}{Name of the treatment adoption time variable.}
 
 \item{time_var}{Name of the time variable.}
 
 \item{unit_var}{Name of the unit identifier.}
-
-\item{treat_time_var}{Name of the treatment adoption time variable.}
 
 \item{min_iv_lag}{Minimum lag to use as instrument (e.g., 2).}
 

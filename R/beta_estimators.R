@@ -20,28 +20,70 @@ fit_common_beta_ols <- function(data,
                                 pretreatment_window = c("full", "minimal")) {
   pretreatment_window <- match.arg(pretreatment_window)
 
-  # Add time_to_treat
-  data <- dplyr::mutate(data, time_to_treat = .data[[time_var]] - .data[[treat_time_var]])
-
-  data <- if (pretreatment_window == "minimal") {
-    dplyr::filter(data, time_to_treat <= 0 & time_to_treat >= -degree)
-  } else {
-    dplyr::filter(data, time_to_treat < 0)
-  }
-
-  # Filter to pre-treatment window
-  data <- dplyr::filter(data, time_to_treat <= 0 & time_to_treat >= -degree)
-
-  # Build formula
-  cov_formula <- as.formula(
-    paste(outcome_var, "~", paste(covariate_vars, collapse = " + "))
+  # 1) Compute time_to_treat
+  df <- dplyr::mutate(
+    data,
+    time_to_treat = .data[[time_var]] - .data[[treat_time_var]]
   )
 
-  # Fit pooled OLS model
-  model <- lm(formula = cov_formula, data = data)
+  # 2) Keep strictly pre-treatment observations (< 0)
+  if (pretreatment_window == "full") {
+    df_pre <- dplyr::filter(df, time_to_treat < 0)
+  } else { # "minimal": take exactly (degree + 1) most-recent pre rows per unit
+    df_pre <- df |>
+      dplyr::filter(time_to_treat < 0) |>
+      dplyr::group_by(.data[[unit_var]]) |>
+      dplyr::arrange(dplyr::desc(time_to_treat), .by_group = TRUE) |>
+      dplyr::slice_head(n = degree + 1) |>
+      dplyr::ungroup()
+  }
 
-  return(stats::coef(model))
+  # 3) Basic checks
+  if (!all(covariate_vars %in% names(df_pre))) {
+    missing_covars <- setdiff(covariate_vars, names(df_pre))
+    stop("Missing covariates in data: ", paste(missing_covars, collapse = ", "))
+  }
+
+  # Drop rows with NA in outcome or covariates
+  df_pre <- df_pre |>
+    dplyr::filter(!is.na(.data[[outcome_var]])) |>
+    tidyr::drop_na(dplyr::all_of(covariate_vars))
+
+  if (nrow(df_pre) == 0) {
+    stop("No pre-treatment observations available after filtering (time_to_treat < 0).")
+  }
+
+  if (pretreatment_window == "minimal") {
+    # Warn if some units contributed fewer than (degree+1) rows
+    counts <- df_pre |>
+      dplyr::count(.data[[unit_var]], name = "n_pre")
+    if (any(counts$n_pre < (degree + 1))) {
+      warning("Some units have fewer than (degree + 1) pre-treatment rows in 'minimal' mode.")
+    }
+  }
+
+  # 4) Fit pooled OLS with only covariates
+  cov_formula <- stats::as.formula(
+    paste(outcome_var, "~", paste(covariate_vars, collapse = " + "))
+  )
+  model <- stats::lm(formula = cov_formula, data = df_pre)
+
+  # 5) Return only the covariate coefficients, in the order requested
+  bhat <- stats::coef(model)
+  # Ensure we return exactly the covariates (intercept dropped even if present)
+  bhat_covars <- bhat[covariate_vars]
+
+  # If any are completely un-identified, they'll be NA; warn rather than error
+  if (any(is.na(bhat_covars))) {
+    na_names <- names(bhat_covars)[is.na(bhat_covars)]
+    warning("Some pooled OLS covariate coefficients are NA (collinearity?): ",
+            paste(na_names, collapse = ", "),
+            ". They will propagate as NA into adjusted_outcome.")
+  }
+
+  return(bhat_covars)
 }
+
 
 
 #' Fit Pooled IV Model with Lagged Outcome (Homogeneous Beta)
@@ -62,51 +104,94 @@ fit_common_beta_ols <- function(data,
 #'
 #' @return A named vector of beta coefficients for the covariates and intercept.
 #' @export
+# IV pooled betas for covariates (return ONLY covariate coefficients)
 fit_common_beta_iv <- function(data,
-                               covariate_vars,
                                outcome_var,
+                               covariate_vars,
+                               treat_time_var,
                                time_var,
                                unit_var,
-                               treat_time_var,
                                min_iv_lag = 2,
                                max_iv_lag = 2,
-                               degree = 0) {
+                               degree = 0,
+                               pretreatment_window = c("full", "minimal")) {
+
+  pretreatment_window <- match.arg(pretreatment_window)
+
   requireNamespace("dplyr", quietly = TRUE)
   requireNamespace("AER", quietly = TRUE)
 
-  # Arrange by unit and time
-  data <- dplyr::arrange(data, .data[[unit_var]], .data[[time_var]])
+  # Work on a copy
+  df <- data
 
-  # Create lags of the outcome variable and name them accordingly
-  for (l in 1:max(c(1, max_iv_lag))) {
+  # --- Create within-unit lags of the outcome (by unit, ordered by time) ---
+  df <- dplyr::group_by(df, .data[[unit_var]]) |>
+    dplyr::arrange(.data[[time_var]], .by_group = TRUE)
+
+  # Make sure at least lag 1 exists for the endogenous regressor
+  max_needed_lag <- max(1, max_iv_lag)
+  for (l in 1:max_needed_lag) {
     lag_name <- paste0("lag", l, "_", outcome_var)
-    data[[lag_name]] <- dplyr::lag(data[[outcome_var]], n = l)
+    df[[lag_name]] <- dplyr::lag(df[[outcome_var]], n = l)
+  }
+  df <- dplyr::ungroup(df)
+
+  # Endogenous regressor: first lag of outcome
+  df$lagged_outcome <- df[[paste0("lag1_", outcome_var)]]
+
+  # --- Define pre-treatment window (consistent with OLS version) ---
+  df <- dplyr::mutate(df, time_to_treat = .data[[time_var]] - .data[[treat_time_var]])
+
+  if (pretreatment_window == "minimal") {
+    # use exactly the last `degree` pre-treatment years:  time_to_treat in [-degree, -1]
+    # if degree == 0, this yields an empty set; in that case, fall back to full (<0)
+    if (degree > 0) {
+      df <- dplyr::filter(df, time_to_treat < 0, time_to_treat >= -degree)
+    } else {
+      df <- dplyr::filter(df, time_to_treat < 0)
+    }
+  } else {
+    # "full" = all pre-treatment years strictly before adoption
+    df <- dplyr::filter(df, time_to_treat < 0)
   }
 
-  # Define lagged outcome (first lag)
-  data$lagged_outcome <- data[[paste0("lag1_", outcome_var)]]
-
-  # Determine pretreatment window using polynomial degree
-  data <- dplyr::mutate(data, time_to_treat = .data[[time_var]] - .data[[treat_time_var]])
-  data <- dplyr::filter(data, time_to_treat <= 0 & time_to_treat >= -degree)
-
-  # Drop incomplete cases
+  # --- Build instrument set: lag(min_iv_lag) ... lag(max_iv_lag) of outcome
   instruments <- paste0("lag", min_iv_lag:max_iv_lag, "_", outcome_var)
-  all_needed <- c("lagged_outcome", instruments, covariate_vars, outcome_var)
-  data <- data[stats::complete.cases(data[, all_needed]), ]
 
-  # Build IV formula with explicit intercept
-  rhs <- paste(c("1", "lagged_outcome", covariate_vars), collapse = " + ")
-  rhs_instr <- paste(c(instruments, covariate_vars), collapse = " + ")
-  fml <- stats::as.formula(paste0(outcome_var, " ~ ", rhs, " | ", rhs_instr))
+  # Variables required to be non-missing
+  needed <- c("lagged_outcome", instruments, covariate_vars, outcome_var)
 
-  # Estimate IV model
-  iv_model <- AER::ivreg(fml, data = data)
+  # Keep complete cases
+  if (!all(needed %in% names(df))) {
+    missing_cols <- setdiff(needed, names(df))
+    stop("IV beta: missing required columns: ", paste(missing_cols, collapse = ", "))
+  }
+  df <- df[stats::complete.cases(df[, needed]), ]
 
-  # Return beta_hat including intercept and covariates (not the endogenous lag)
-  beta_full <- stats::coef(iv_model)
-  keep <- c("(Intercept)", covariate_vars)
-  return(beta_full[keep])
+  # Guardrails: enough rows?
+  if (nrow(df) == 0) {
+    stop("IV beta: 0 (non-NA) cases after filtering to pre-treatment window and complete cases.")
+  }
+
+  # --- Build IV formula ---
+  # Structural RHS includes intercept + lagged_outcome + covariates
+  rhs_str     <- paste(c("1", "lagged_outcome", covariate_vars), collapse = " + ")
+  rhs_instr   <- paste(c(instruments, covariate_vars), collapse = " + ")
+  iv_formula  <- stats::as.formula(paste0(outcome_var, " ~ ", rhs_str, " | ", rhs_instr))
+
+  # --- Estimate IV ---
+  iv_model <- AER::ivreg(iv_formula, data = df)
+
+  # Return ONLY covariate coefficients (no intercept, no endogenous regressor)
+  bhat <- stats::coef(iv_model)
+  keep <- covariate_vars
+  bhat_cov <- bhat[keep]
+
+  # Safety check: names + length
+  if (any(is.na(bhat_cov)) || length(bhat_cov) != length(covariate_vars)) {
+    stop("IV beta: could not recover covariate coefficients cleanly. ",
+         "Check instrument strength / sample size.")
+  }
+
+  return(bhat_cov)
 }
-
-
