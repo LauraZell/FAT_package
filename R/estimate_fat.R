@@ -156,26 +156,51 @@ estimate_fat <- function(data,
       })
 
 
-    # For DFAT: Merge treatment indicator back (used only in post-treatment comparison)
+    # For DFAT: Merge treatment indicator back (used only in post-treatment comparison) (new: include guardrails against duplicates)
+          # if (dfat_mode) {
+          #   all_preds <- dplyr::left_join(
+          #     all_preds,
+          #     dplyr::select(data, .data[[unit_var]], .data[[time_var]], treated),
+          #     by = c(unit_var, time_var)
+          #   )
+          # }
     if (dfat_mode) {
+      all_preds <- all_preds %>%
+        dplyr::group_by(!!key_unit, !!key_time, deg, hh) %>%
+        dplyr::slice_head(n = 1) %>%  # ensure unique before joining
+        dplyr::ungroup()
+
       all_preds <- dplyr::left_join(
         all_preds,
-        dplyr::select(data, .data[[unit_var]], .data[[time_var]], treated),
+        dplyr::select(data, !!key_unit, !!key_time, treated),
         by = c(unit_var, time_var)
       )
     }
 
-
+    # Set up to enforce uniqueness of predictions per (unit, time, deg, hh)
+    key_unit <- rlang::sym(unit_var)
+    key_time <- rlang::sym(time_var)
 
     # Mutate deg, hh and select columns:
     all_preds <- all_preds %>%
       dplyr::mutate(deg = deg, hh = hh) %>%
       dplyr::select(all_of(c(unit_var, time_var, outcome_var,
                              "preds", "timeToTreat", "hh", "deg", "n_pre_fit", "pre_years_used"))) %>%
-      # Keep at most one row per key
-      dplyr::distinct(!!rlang::sym(unit_var),
-                      !!rlang::sym(time_var),
-                      deg, hh, .keep_all = TRUE)
+      # Keep at most one row per key (if something upstream created dups, collapse to one row per key)
+      dplyr::group_by(!!key_unit, !!key_time, deg, hh) %>%
+      dplyr::slice_head(n = 1) %>%
+      dplyr::ungroup()
+
+    # Remove later: one-line diagnostic
+    dup_check <- all_preds %>%
+      dplyr::count(!!key_unit, !!key_time, deg, hh, name = "n") %>%
+      dplyr::filter(n > 1)
+
+    if (nrow(dup_check) > 0) {
+      warning("Internal duplicate keys survived to all_preds; collapsing to first row per key.\n",
+              "Examples: ",
+              paste(utils::capture.output(print(utils::head(dup_check, 5))), collapse = "\n"))
+    }
 
 
     # === Target rows for FAT at THIS horizon only ===
@@ -184,7 +209,6 @@ estimate_fat <- function(data,
     target_data <- all_preds %>%
       dplyr::filter(.data$hh == .h) %>%
       dplyr::mutate(diff = .data[[outcome_var]] - preds)
-
 
 
     # ===================== DFAT logic =====================
