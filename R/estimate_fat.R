@@ -155,6 +155,15 @@ estimate_fat <- function(data,
         }
       })
 
+    # Set up to enforce uniqueness of predictions per (unit, time, deg, hh)
+    key_unit <- rlang::sym(unit_var)
+    key_time <- rlang::sym(time_var)
+
+
+    # Attach deg and hh to savely use them in grouping/filters
+    all_preds <- all_preds %>%
+      dplyr::mutate(deg = deg, hh = hh) %>%
+      dplyr::distinct(!!key_unit, !!key_time, deg, hh, .keep_all = TRUE)
 
     # For DFAT: Merge treatment indicator back (used only in post-treatment comparison) (new: include guardrails against duplicates)
           # if (dfat_mode) {
@@ -164,32 +173,29 @@ estimate_fat <- function(data,
           #     by = c(unit_var, time_var)
           #   )
           # }
+
+
     if (dfat_mode) {
-      all_preds <- all_preds %>%
-        dplyr::group_by(!!key_unit, !!key_time, deg, hh) %>%
-        dplyr::slice_head(n = 1) %>%  # ensure unique before joining
-        dplyr::ungroup()
+      treated_lookup <- data %>%
+        dplyr::select(!!key_unit, !!key_time, treated) %>%
+        dplyr::distinct(!!key_unit, !!key_time, .keep_all = TRUE)
 
       all_preds <- dplyr::left_join(
         all_preds,
-        dplyr::select(data, !!key_unit, !!key_time, treated),
+        treated_lookup,
         by = c(unit_var, time_var)
       )
     }
 
-    # Set up to enforce uniqueness of predictions per (unit, time, deg, hh)
-    key_unit <- rlang::sym(unit_var)
-    key_time <- rlang::sym(time_var)
+    # Keep only needed columns:
+    sel_cols <- c(unit_var, time_var, outcome_var,
+                  "preds", "timeToTreat", "hh", "deg", "n_pre_fit", "pre_years_used")
+    if (dfat_mode) sel_cols <- c(sel_cols, "treated")
 
-    # Mutate deg, hh and select columns:
     all_preds <- all_preds %>%
-      dplyr::mutate(deg = deg, hh = hh) %>%
-      dplyr::select(all_of(c(unit_var, time_var, outcome_var,
-                             "preds", "timeToTreat", "hh", "deg", "n_pre_fit", "pre_years_used"))) %>%
-      # Keep at most one row per key (if something upstream created dups, collapse to one row per key)
-      dplyr::group_by(!!key_unit, !!key_time, deg, hh) %>%
-      dplyr::slice_head(n = 1) %>%
-      dplyr::ungroup()
+      dplyr::select(dplyr::all_of(sel_cols)) %>%
+      # belt & suspenders: re‑enforce uniqueness of the key
+      dplyr::distinct(!!key_unit, !!key_time, deg, hh, .keep_all = TRUE)
 
     # Remove later: one-line diagnostic
     dup_check <- all_preds %>%
@@ -202,9 +208,9 @@ estimate_fat <- function(data,
               paste(utils::capture.output(print(utils::head(dup_check, 5))), collapse = "\n"))
     }
 
-    # === Target rows for FAT at THIS horizon only ===
+    # Target rows for FAT at the specified horizon only
     # Pick the single forecast step 'hh' (i.e., timeToTreat == forecast_lag + hh - 1)
-    .h <- hh  # avoid name collision
+    .h <- hh  # avoid NSE name collision
     target_data <- all_preds %>%
       dplyr::filter(.data$hh == .h) %>%
       dplyr::mutate(diff = .data[[outcome_var]] - preds)
