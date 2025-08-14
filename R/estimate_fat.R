@@ -165,13 +165,18 @@ estimate_fat <- function(data,
       )
     }
 
-    # Keep row-level hh coming from the fit; just add deg
+
+
+    # Mutate deg, hh and select columns:
     all_preds <- all_preds %>%
-      dplyr::mutate(deg = deg) %>%
-      dplyr::select(all_of(c(
-        unit_var, time_var, outcome_var,
-        "preds", "treat_time_for_fit", "timeToTreat", "hh", "deg", "n_pre_fit", "pre_years_used"
-      )))
+      dplyr::mutate(deg = deg, hh = hh) %>%
+      dplyr::select(all_of(c(unit_var, time_var, outcome_var,
+                             "preds", "timeToTreat", "hh", "deg", "n_pre_fit", "pre_years_used"))) %>%
+      # Keep at most one row per key
+      dplyr::distinct(!!rlang::sym(unit_var),
+                      !!rlang::sym(time_var),
+                      deg, hh, .keep_all = TRUE)
+
 
     # === Target rows for FAT at THIS horizon only ===
     # Pick the single forecast step 'hh' (i.e., timeToTreat == forecast_lag + hh - 1)
