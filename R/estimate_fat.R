@@ -90,19 +90,26 @@ estimate_fat <- function(data,
     # If covariates + pooled estimation selected, compute beta
     if (!is.null(covariate_vars) && beta_estimator != "none") {
       if (beta_estimator == "ols") {
-        beta_hat <- fit_common_beta_ols(
-          data = data,
-          outcome_var = outcome_var,
-          covariate_vars = covariate_vars,
-          time_var = time_var,
-          treat_time_var = "treat_time_for_fit",
-          unit_var = unit_var,
-          deg = deg,
-          pretreatment_window = pretreatment_window)
+        beta_hat <- fit_common_beta_ols(data = data,
+                                        outcome_var = outcome_var,
+                                        covariate_vars = covariate_vars,
+                                        treat_time_var = "treat_time_for_fit",
+                                        time_var = time_var,
+                                        unit_var = unit_var,
+                                        degree = deg,
+                                        pretreatment_window = pretreatment_window)
 
       } else if (beta_estimator == "iv") {
-        beta_hat <- fit_common_beta_iv(data, outcome_var, covariate_vars, time_var,
-                                       "treat_time_for_fit", unit_var, deg, min_iv_lag, max_iv_lag)
+        beta_hat <- fit_common_beta_iv(data          = data,
+                                       outcome_var   = outcome_var,
+                                       covariate_vars= covariate_vars,
+                                       treat_time_var= "treat_time_for_fit",
+                                       time_var      = time_var,
+                                       unit_var      = unit_var,
+                                       degree        = deg,
+                                       min_iv_lag    = min_iv_lag,
+                                       max_iv_lag    = max_iv_lag,
+                                       pretreatment_window = pretreatment_window)
       }
     }
 
@@ -158,25 +165,21 @@ estimate_fat <- function(data,
       )
     }
 
-    # Add meta info (deg, hh) and filter by forecast horizon
+    # Keep row-level hh coming from the fit; just add deg
     all_preds <- all_preds %>%
-      dplyr::mutate(
-        deg = deg,
-        hh = hh,
-      ) %>%
-      dplyr::select(all_of(c(unit_var, time_var, outcome_var, "preds", "treat_time_for_fit", "deg", "timeToTreat", "hh")))
+      dplyr::mutate(deg = deg) %>%
+      dplyr::select(all_of(c(
+        unit_var, time_var, outcome_var,
+        "preds", "treat_time_for_fit", "timeToTreat", "hh", "deg", "n_pre_fit", "pre_years_used"
+      )))
 
-
-    all_preds$hh <- ifelse(all_preds$timeToTreat >= forecast_lag &
-                             all_preds$timeToTreat <= forecast_lag + hh - 1,
-                           hh, 0)
-
-
-    # Keep only forecast horizon data (predictions made within [lag, lag + hh - 1])
-    target_data <- dplyr::filter(all_preds,
-                                 timeToTreat >= forecast_lag,
-                                 timeToTreat <= forecast_lag + hh - 1) %>%
+    # === Target rows for FAT at THIS horizon only ===
+    # Pick the single forecast step 'hh' (i.e., timeToTreat == forecast_lag + hh - 1)
+    .h <- hh  # avoid name collision
+    target_data <- all_preds %>%
+      dplyr::filter(.data$hh == .h) %>%
       dplyr::mutate(diff = .data[[outcome_var]] - preds)
+
 
 
     # ===================== DFAT logic =====================

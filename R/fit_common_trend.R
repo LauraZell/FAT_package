@@ -76,39 +76,40 @@ fit_common_trend <- function(data,
     pre_data <- subset(unit_data, timeToTreat < 0)
   }
 
-  if (nrow(pre_data) <= degree) {
-    warning(paste("Unit", unit, "has too few pre-treatment observations for degree =", degree))
-  }
+  # Include variables to check how many pretreatment years are included
+  n_pre_fit <- nrow(pre_data)
+  pre_years_used <- paste(sort(unique(pre_data$timeToTreat)), collapse = ",")
 
-  # Required number of observations depends on window type
-  required_n <- if (pretreatment_window == "minimal") {
-    degree + 1 + if (!is.null(covariate_vars)) length(covariate_vars) else 0
-  } else {
-    1  # allow fewer if "full", but still needs at least one row
-  }
-
-  if (nrow(pre_data) < required_n) {
+  # Need at least degree+1 DISTINCT pre-treatment points
+  required_n <- degree + 1
+  if (nrow(pre_data) < required_n || dplyr::n_distinct(pre_data$timeToTreat) < required_n) {
     warning(paste("Skipping unit:", unit, "due to insufficient pre-treatment observations."))
-    return(dplyr::tibble(
-      !!unit_var := unit,
-      !!time_var := NA_integer_,
-      !!outcome_var := NA_real_,
-      preds = NA_real_,
-      treat_time_for_fit = NA_real_,
-      timeToTreat = NA_real_,
-      deg = degree,
-      hh = hh
-    ))
+
+    return(
+      dplyr::mutate(
+        unit_data[, c(unit_var, time_var, outcome_var, treat_time_var)],
+        timeToTreat = unit_data[[time_var]] - unit_data[[treat_time_var]],
+        preds = NA_real_,
+        hh    = 0L,           # will be overwritten later anyway
+        deg   = degree,       # just for consistency
+        skipped = TRUE,       # optional
+        n_pre_fit = n_pre_fit,  # number of pre-treatment rows used
+        pre_years_used = pre_years_used  # years used in pre-treatment fit
+        )
+    )
   }
 
 
-  # Build formula using polynomial time trend terms
-  rhs_terms <- paste0("ttreat", 1:degree)
-  rhs <- paste(rhs_terms, collapse = " + ")
-  formula <- as.formula(paste("adjusted_outcome ~", rhs))
+  # Build formula using polynomial time trend terms and fit on pretreatment data
+  if (degree == 0) {
+    model <- lm(adjusted_outcome ~ 1, data = pre_data)
+  } else {
+    rhs_term <- paste0("ttreat", 1:degree)
+    rhs <- paste(rhs_term, collapse = " + ")
+    formula <- as.formula(paste("adjusted_outcome ~", rhs))
+    model <- lm(formula, data = pre_data)
+  }
 
-  # Fit model on pre-treatment data
-  model <- lm(formula, data = pre_data)
   print(paste("Fitting model for unit:", unit, "with degree:", degree))
   print(summary(model))
 
@@ -137,6 +138,8 @@ fit_common_trend <- function(data,
 
   # Add timeToTreat again (in case subset removed it), and compute hh indicator
   unit_data$timeToTreat <- unit_data[[time_var]] - unit_data[[treat_time_var]]
+  unit_data$n_pre_fit <- n_pre_fit
+  unit_data$pre_years_used <- pre_years_used
 
   unit_data$hh <- dplyr::if_else(
     unit_data$timeToTreat >= forecast_lag & unit_data$timeToTreat <= forecast_lag + hh - 1,
@@ -145,6 +148,6 @@ fit_common_trend <- function(data,
   )
 
   # Return all years with preds (only filled for post-treatment forecast horizon)
-  return(unit_data[, c(unit_var, time_var, outcome_var, "preds", treat_time_var, "timeToTreat", "hh")])
+  return(unit_data[, c(unit_var, time_var, outcome_var, "preds", treat_time_var, "timeToTreat", "hh", "n_pre_fit", "pre_years_used")])
 
 }
