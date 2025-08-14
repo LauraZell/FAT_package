@@ -202,7 +202,6 @@ estimate_fat <- function(data,
               paste(utils::capture.output(print(utils::head(dup_check, 5))), collapse = "\n"))
     }
 
-
     # === Target rows for FAT at THIS horizon only ===
     # Pick the single forecast step 'hh' (i.e., timeToTreat == forecast_lag + hh - 1)
     .h <- hh  # avoid name collision
@@ -275,11 +274,14 @@ estimate_fat <- function(data,
 
   # Generate all (degree, horizon) combinations
   combos <- base::expand.grid(deg = degrees, hh = horizons)
-
   results_list <- purrr::pmap(combos, fat_for_combo)
-
   summary_df <- purrr::map_dfr(results_list, "summary")
-  preds_df <- purrr::map_dfr(results_list, "predictions", .id = "combo_id")
+  preds_df <- purrr::map_dfr(results_list, "predictions")
+
+  # belt-and-suspenders: keep a single row per (unit, time, deg, hh)
+  preds_df <- preds_df %>%
+    dplyr::distinct(!!rlang::sym(unit_var), !!rlang::sym(time_var), deg, hh, .keep_all = TRUE)
+
 
   return(list(results = summary_df, predictions = preds_df))
 }
