@@ -33,84 +33,108 @@ fit_unitwise_trend <- function(data,
                                treat_time_var,
                                hh,
                                covariate_vars = NULL,
-                               beta_hat = NULL,
+                               beta_hat = NULL,          # ignored in unitwise; kept for signature parity
                                forecast_lag = 0,
                                pretreatment_window = c("full", "minimal")) {
   pretreatment_window <- match.arg(pretreatment_window)
-  # Filter data to the unit of interest
-  unit_data <- data[data[[unit_var]] == unit, ]
 
-  # Ensure numeric time variables (avoids factor errors)
-  unit_data[[time_var]] <- as.numeric(as.character(unit_data[[time_var]]))
+  # Warn if a pooled beta_hat was (accidentally) passed
+  if (!is.null(beta_hat)) {
+    warning("fit_unitwise_trend(): beta_hat supplied but will be ignored in unitwise mode.")
+  }
+
+  # Subset unit
+  unit_data <- data[data[[unit_var]] == unit, , drop = FALSE]
+
+  # Ensure numeric
+  unit_data[[time_var]]       <- as.numeric(as.character(unit_data[[time_var]]))
   unit_data[[treat_time_var]] <- as.numeric(as.character(unit_data[[treat_time_var]]))
 
-  # Create time-to-treatment variable
+  # time-to-treatment and polynomial terms
   unit_data$timeToTreat <- unit_data[[time_var]] - unit_data[[treat_time_var]]
-
-  # Create polynomial terms for timeToTreat
-  for (d in 1:degree) {
-    unit_data[[paste0("ttreat", d)]] <- unit_data$timeToTreat^d
+  if (degree > 0) {
+    for (d in 1:degree) {
+      unit_data[[paste0("ttreat", d)]] <- unit_data$timeToTreat^d
+    }
   }
 
-  # Subtract covariate contribution if beta_hat is provided
-  if (!is.null(beta_hat) && !is.null(covariate_vars)) {
-    covariate_matrix <- as.matrix(unit_data[, covariate_vars, drop = FALSE])
-    covariate_effect <- as.vector(covariate_matrix %*% beta_hat[covariate_vars])
-    unit_data$adjusted_outcome <- unit_data[[outcome_var]] - covariate_effect
-  } else {
-    unit_data$adjusted_outcome <- unit_data[[outcome_var]]
-  }
-
-  # Keep only pre-treatment data for estimation
+  # Choose pre-treatment window
+  pre_data <- subset(unit_data, timeToTreat < 0)
   if (pretreatment_window == "minimal") {
-    pre_data <- subset(unit_data, timeToTreat < 0)
-    pre_data <- dplyr::arrange(pre_data, desc(timeToTreat)) %>% head(degree + 1)
+    # take the (degree+1) most recent distinct times (and keep all rows at those times)
+    # Step 1: get the (degree+1) most recent distinct t's
+    distinct_t <- sort(unique(pre_data$timeToTreat), decreasing = TRUE)
+    keep_t     <- head(distinct_t, degree + 1)
+    # Step 2: keep all rows with those t's (handles duplicates if any)
+    pre_data   <- pre_data[pre_data$timeToTreat %in% keep_t, , drop = FALSE]
+  }
+
+  # Diagnostics
+  n_pre_fit       <- nrow(pre_data)
+  pre_years_used  <- paste(sort(unique(pre_data$timeToTreat)), collapse = ",")
+
+  # Identification checks
+  p <- if (is.null(covariate_vars)) 0L else length(covariate_vars)
+  # number of parameters to estimate = intercept (1) + degree polynomial + p covariates
+  required_n <- (degree + 1L) + p
+
+  if (n_pre_fit < required_n || dplyr::n_distinct(pre_data$timeToTreat) < (degree + 1L)) {
+    warning(paste("Skipping unit:", unit,
+                  "due to insufficient pre-treatment observations (need at least",
+                  required_n, "rows and", degree + 1L, "distinct time points)."))
+    # return all years w/ NA preds so the caller can keep the pre-period for plotting
+    return(
+      dplyr::mutate(
+        unit_data[, c(unit_var, time_var, outcome_var, treat_time_var), drop = FALSE],
+        timeToTreat   = unit_data[[time_var]] - unit_data[[treat_time_var]],
+        preds         = NA_real_,
+        hh            = 0L,
+        deg           = degree,
+        skipped       = TRUE,
+        n_pre_fit     = n_pre_fit,
+        pre_years_used = pre_years_used
+      )
+    )
+  }
+
+  # Build RHS: intercept + polynomial terms + covariates
+  poly_terms <- if (degree > 0) paste0("ttreat", 1:degree) else NULL
+  rhs_terms  <- c(poly_terms, covariate_vars)
+  # If there are no rhs terms (degree==0 & no covariates), keep intercept-only
+  fml <- if (length(rhs_terms) > 0) {
+    as.formula(paste(outcome_var, "~", paste(rhs_terms, collapse = " + ")))
   } else {
-    pre_data <- subset(unit_data, timeToTreat < 0)
+    as.formula(paste(outcome_var, "~ 1"))
   }
 
-  if (nrow(pre_data) <= degree) {
-    warning(paste("Unit", unit, "has too few pre-treatment observations for degree =", degree))
-  }
+  # Fit on pre-treatment
+  model <- lm(fml, data = pre_data)
+  # Optional: print summary for debugging
+  # print(summary(model))
 
-
-  # Create regression formula (e.g. adjusted_outcome ~ ttreat1 + ttreat2)
-  rhs_terms <- paste0("ttreat", 1:degree)
-  rhs <- paste(rhs_terms, collapse = " + ")
-  formula <- as.formula(paste("adjusted_outcome ~", rhs))
-
-  # Fit model on pre-treatment data
-  model <- lm(formula, data = pre_data)
-  print(summary(model))
-
-  # New: restrict to horizon hh
+  # Predict ONLY within the forecast horizon [forecast_lag, forecast_lag+hh-1]
   post_data <- subset(unit_data,
                       timeToTreat >= forecast_lag &
                         timeToTreat <= forecast_lag + hh - 1)
 
-  preds <- predict(model, newdata = post_data)
-
-  # Fill in predictions only for post-treatment years
   unit_data$preds <- NA_real_
-  unit_data$preds[unit_data$timeToTreat %in% post_data$timeToTreat] <- preds
-
-  # Re-add covariate effects if subtracted
-  if (!is.null(beta_hat) && !is.null(covariate_vars)) {
-    post_idx <- unit_data$timeToTreat >= forecast_lag
-    unit_data$preds[post_idx] <- unit_data$preds[post_idx] + covariate_effect[post_idx]
-
+  if (nrow(post_data) > 0) {
+    unit_data$preds[unit_data$timeToTreat %in% post_data$timeToTreat] <-
+      predict(model, newdata = post_data)
   }
 
-  # Add timeToTreat again (in case subset removed it), and compute hh indicator
-  unit_data$timeToTreat <- unit_data[[time_var]] - unit_data[[treat_time_var]]
-
+  # hh index for plotting (keep all rows; pre gets 0)
   unit_data$hh <- dplyr::if_else(
     unit_data$timeToTreat >= forecast_lag & unit_data$timeToTreat <= forecast_lag + hh - 1,
     unit_data$timeToTreat - forecast_lag + 1L,
     0L
   )
 
-  # Return all years with preds (only filled for post-treatment forecast horizon)
-  return(unit_data[, c(unit_var, time_var, outcome_var, "preds", treat_time_var, "timeToTreat", "hh")])
+  # Attach diagnostics
+  unit_data$n_pre_fit      <- n_pre_fit
+  unit_data$pre_years_used <- pre_years_used
 
+  # Return full time path (pre rows kept; preds only filled on horizon)
+  unit_data[, c(unit_var, time_var, outcome_var, "preds",
+                treat_time_var, "timeToTreat", "hh", "n_pre_fit", "pre_years_used")]
 }
