@@ -33,6 +33,7 @@
 #'   \item{results}{Data frame with summary estimates: deg, hh, FAT, sdFAT.}
 #'   \item{predictions}{Data frame with unit-level observed and predicted values across time, for plotting.}
 #' }
+#' @export
 
 
 estimate_fat <- function(data,

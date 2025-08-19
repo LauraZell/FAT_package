@@ -36,8 +36,8 @@ fat_validate <- function(predictions,
 
   # ---- 1) Uniqueness: at most one row per (unit,time,deg,hh)
   dup_df <- predictions %>%
-    dplyr::count(!!key_unit, !!key_time, .data$deg, .data$hh, name = "n") %>%
-    dplyr::filter(.data$n > 1)
+    dplyr::count(!!key_unit, !!key_time, deg, hh, name = "n") %>%
+    dplyr::filter(n > 1)
 
   chk1 <- tibble::tibble(
     check   = "unique_keys",
@@ -57,12 +57,13 @@ fat_validate <- function(predictions,
     )
   } else {
     lab <- predictions %>%
+      filter(!is.na(preds)) %>% # only check rows with predictions
       dplyr::mutate(hh_expected = dplyr::if_else(
-        .data$timeToTreat >= forecast_lag,
-        .data$timeToTreat - forecast_lag + 1L,
+        timeToTreat >= forecast_lag,
+        timeToTreat - forecast_lag + 1L,
         0L
       )) %>%
-      dplyr::mutate(mismatch = .data$hh != .data$hh_expected)
+      dplyr::mutate(mismatch = hh != hh_expected)
 
     n_mismatch <- sum(lab$mismatch %in% TRUE, na.rm = TRUE)
 
@@ -86,12 +87,12 @@ fat_validate <- function(predictions,
   } else {
     # rows with a filled prediction
     pr_non_na <- predictions %>%
-      dplyr::filter(!is.na(.data$preds))
+      dplyr::filter(!is.na(preds))
 
     # For those rows, hh should equal timeToTreat-forecast_lag+1 and be >=1
     bad_bounds <- pr_non_na %>%
-      dplyr::mutate(hh_expected = .data$timeToTreat - forecast_lag + 1L) %>%
-      dplyr::filter(.data$hh != .data$hh_expected | .data$hh < 1L)
+      dplyr::mutate(hh_expected = timeToTreat - forecast_lag + 1L) %>%
+      dplyr::filter(hh != hh_expected | hh < 1L)
 
     chk3 <- tibble::tibble(
       check   = "horizon_bounds",
@@ -105,13 +106,14 @@ fat_validate <- function(predictions,
   # (This checks you kept all observed outcomes pre-treatment.)
   pre_in_data <- data %>%
     dplyr::mutate(timeToTreat = !!key_time - data$treat_time_for_fit) %>%
-    dplyr::filter(.data$timeToTreat < 0) %>%
+    dplyr::filter(timeToTreat < 0) %>%
     dplyr::select(!!key_unit, !!key_time) %>%
     dplyr::distinct()
 
   pre_in_pred <- predictions %>%
-    dplyr::filter(.data$timeToTreat < 0) %>%
-    dplyr::select(!!key_unit, !!key_time, .data$preds)
+    dplyr::filter(timeToTreat < 0) %>%
+    dplyr::filter(deg == 1) %>% # only check deg == 1, otherwise there are duplicates
+    dplyr::select(!!key_unit, !!key_time, preds)
 
   pre_join <- pre_in_data %>%
     dplyr::left_join(pre_in_pred, by = c(unit_var, time_var))
@@ -138,34 +140,27 @@ fat_validate <- function(predictions,
   } else {
     # build target rows for each (deg,hh)
     targ <- predictions %>%
-      dplyr::filter(.data$hh >= 1L) %>%          # only forecasted steps
-      dplyr::mutate(diff = !!ysym - .data$preds)
+      dplyr::filter(hh >= 1L) %>%          # only forecasted steps
+      dplyr::mutate(diff = !!ysym - preds)
 
     if (!dfat_mode) {
       recomputed <- targ %>%
-        dplyr::group_by(.data$deg, .data$hh) %>%
-        dplyr::summarise(FAT_hat = mean(.data$diff, na.rm = TRUE), .groups = "drop")
+        dplyr::group_by(deg, hh) %>%
+        dplyr::summarise(FAT_hat = mean(diff, na.rm = TRUE), .groups = "drop")
     } else {
-      # need treated flag from data
-      treated_df <- data %>%
-        dplyr::select(!!key_unit, !!key_time, .data$treated)
-
-      targ2 <- targ %>%
-        dplyr::left_join(treated_df, by = c(unit_var, time_var))
-
-      recomputed <- targ2 %>%
-        dplyr::group_by(.data$deg, .data$hh) %>%
+      recomputed <- targ %>%
+        dplyr::group_by(deg, hh) %>%
         dplyr::summarise(
-          FAT_hat = mean(.data$diff[.data$treated != control_group_value], na.rm = TRUE) -
-            mean(.data$diff[.data$treated == control_group_value], na.rm = TRUE),
+          FAT_hat = mean(diff[treated != control_group_value], na.rm = TRUE) -
+            mean(diff[treated == control_group_value], na.rm = TRUE),
           .groups = "drop"
         )
     }
 
     comp <- results %>%
-      dplyr::select(.data$deg, .data$hh, .data$FAT) %>%
+      dplyr::select(deg, hh, FAT) %>%
       dplyr::left_join(recomputed, by = c("deg", "hh")) %>%
-      dplyr::mutate(err = abs(.data$FAT - .data$FAT_hat))
+      dplyr::mutate(err = abs(FAT - FAT_hat))
 
     tol <- 1e-8
     n_bad <- sum(is.na(comp$FAT_hat) | comp$err > tol)
