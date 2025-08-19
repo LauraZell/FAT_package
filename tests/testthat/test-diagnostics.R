@@ -1,7 +1,7 @@
 test_that("diagnostics pass on baseline FAT output", {
   skip_on_cran()
 
-  sim_data <- make_sim_data(n_units = 6, years = 2000:2008)
+  sim_data <- simulate_fat_testdata(n_units = 6)
 
   res <- estimate_fat(
     data = sim_data,
@@ -33,7 +33,7 @@ test_that("diagnostics pass on baseline FAT output", {
 test_that("diagnostics pass with 'minimal' window", {
   skip_on_cran()
 
-  sim_data <- make_sim_data(n_units = 6, years = 2000:2008)
+  sim_data <- simulate_fat_testdata(n_units = 6)
 
   res <- estimate_fat(
     data = sim_data,
@@ -65,10 +65,7 @@ test_that("diagnostics pass with 'minimal' window", {
 test_that("DFAT diagnostics (treated vs control) recompute", {
   skip_on_cran()
 
-  sim_data <- make_sim_data(n_units = 8, years = 2000:2008)
-  # fabricate treated flag (half treated)
-  treated_units <- unique(sim_data$state)[1:4]
-  sim_data$treated <- sim_data$state %in% treated_units
+  sim_data<- simulate_dfat_testdata(n_units = 10)
 
   res <- estimate_fat(
     data = sim_data,
