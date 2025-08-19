@@ -276,7 +276,7 @@ plot_fat_dfat_trajectories <- function(predictions_df,
     mutate(type = "Observed", value = .data[[outcome_var]])
 
   forecast_df <- predictions_df %>%
-    filter(timeToTreat >= 1) %>%
+    filter(timeToTreat >= 0) %>%
     mutate(type = "Forecasted", value = .data[[pred_var]])
 
   # Combine both
