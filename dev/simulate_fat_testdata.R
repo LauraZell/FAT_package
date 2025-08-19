@@ -48,5 +48,3 @@ assign("sim_data", sim_data, envir = .GlobalEnv)
 # Optional: write to file for persistent testing or examples
 # readr::write_csv(sim_data, "dev/simulated_fat_data.csv")
 
-# Ready to test:
-# estimate_fat(sim_data, unit_var = "state", time_var = "Year", ... )
