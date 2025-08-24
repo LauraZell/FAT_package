@@ -178,6 +178,83 @@ plot_fat_dfat_avg_trajectory <- function(predictions_df, mode = c("fat", "dfat")
     )
 }
 
+#' Plot FAT / DFAT with Confidence Bands
+#'
+#' @param fat_df Data frame of summary results. Must include: hh, FAT, sdFAT, deg.
+#'               If a column \code{llag} exists (from placebo runs), you can select which lag to plot.
+#' @param llag If \code{fat_df} contains a column \code{llag}, choose which placebo lag to plot (e.g., 2).
+#'             Ignored if \code{llag} column is absent.
+#' @param ci_level Confidence level for the band (default 0.95).
+#' @param facet_by_degree Logical. Facet one panel per degree. Default TRUE.
+#' @param show_points Logical. Overlay points on the line. Default TRUE.
+#' @param title Optional plot title.
+#' @param y_label Optional y-axis label. Defaults to "FAT (estimate)".
+#'
+#' @return A ggplot object.
+#' @export
+#'
+plot_fat_ci <- function(fat_df,
+                        llag = NULL,
+                        ci_level = 0.95,
+                        facet_by_degree = TRUE,
+                        show_points = TRUE,
+                        title = NULL,
+                        y_label = "FAT (estimate)") {
+  requireNamespace("ggplot2", quietly = TRUE)
+  requireNamespace("dplyr", quietly = TRUE)
+
+  df <- fat_df
+
+  # If this is a placebo result table, optionally filter by chosen lag
+  if ("llag" %in% names(df)) {
+    if (is.null(llag)) {
+      stop("Detected a placebo results table (column 'llag' present). Please set `llag = ...` to choose which lag to plot.")
+    }
+    df <- dplyr::filter(df, .data$llag == !!llag)
+    if (nrow(df) == 0) stop("No rows found for the requested `llag`.")
+  }
+
+  # Keep necessary columns and compute CI
+  z <- stats::qnorm(0.5 + ci_level / 2)
+  df <- df |>
+    dplyr::select(dplyr::all_of(c("hh", "FAT", "sdFAT", "deg")), dplyr::everything()) |>
+    dplyr::mutate(
+      lower = FAT - z * sdFAT,
+      upper = FAT + z * sdFAT,
+      deg   = factor(.data$deg)
+    )
+
+  p <- ggplot2::ggplot(df, ggplot2::aes(x = .data$hh, y = .data$FAT, group = .data$deg, color = .data$deg, fill = .data$deg)) +
+    ggplot2::geom_ribbon(ggplot2::aes(ymin = .data$lower, ymax = .data$upper), alpha = 0.15, color = NA) +
+    ggplot2::geom_line(linewidth = 0.7)
+
+  if (show_points) {
+    p <- p + ggplot2::geom_point(size = 1.8)
+  }
+
+  if (facet_by_degree) {
+    p <- p + ggplot2::facet_wrap(~deg, scales = "free_y")
+  }
+
+  p <- p +
+    ggplot2::labs(
+      x = "Forecast horizon (hh)",
+      y = y_label,
+      color = "Degree",
+      fill  = "Degree",
+      title = title
+    ) +
+    ggplot2::scale_x_continuous(breaks = scales::breaks_width(1)) +  # ensure integer ticks only
+    ggplot2::theme_minimal() +
+    ggplot2::theme(
+      panel.grid.minor = ggplot2::element_blank(),
+      legend.position = if (facet_by_degree) "none" else "right"
+    )
+
+  return(p)
+}
+
+
 
 #' #' Plot FAT or DFAT trajectories for observed vs. forecasted values
 #' #'
