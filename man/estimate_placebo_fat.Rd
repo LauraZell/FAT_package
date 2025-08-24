@@ -2,36 +2,75 @@
 % Please edit documentation in R/placebo_fat.R
 \name{estimate_placebo_fat}
 \alias{estimate_placebo_fat}
-\title{Compute Placebo FAT estimates}
+\title{Placebo FAT / DFAT (wrapper around estimate_fat)}
 \usage{
 estimate_placebo_fat(
   data,
   unit_var,
   time_var,
   outcome_var,
-  treat_year_var,
-  degrees = 1:2,
-  lags = 0:2
+  treat_time_var,
+  units_to_include = NULL,
+  degrees = 0:2,
+  horizons = 1:5,
+  lags = 0:2,
+  se_method = "analytic",
+  n_bootstrap = 1000,
+  covariate_vars = NULL,
+  beta_estimator = c("none", "ols", "iv", "unitwise"),
+  min_iv_lag = 2,
+  max_iv_lag = 2,
+  control_group_value = NULL,
+  forecast_lag = 0,
+  pretreatment_window = c("full", "minimal")
 )
 }
 \arguments{
-\item{data}{Data.frame with required variables.}
+\item{data}{A long-format dataframe with panel structure.}
 
-\item{unit_var}{Unit variable name.}
+\item{unit_var}{Name of the column for the unit ID (e.g., "state", "mun_id").}
 
-\item{time_var}{Time variable name.}
+\item{time_var}{Name of the column for the time variable (e.g., "year").}
 
-\item{outcome_var}{Outcome variable name.}
+\item{outcome_var}{Name of the outcome variable to be forecasted.}
 
-\item{treat_year_var}{Adoption year variable.}
+\item{treat_time_var}{Name of the column indicating treatment year per unit.}
 
-\item{degrees}{Vector of polynomial degrees.}
+\item{units_to_include}{Optional vector of unit names to restrict analysis.}
 
-\item{lags}{Vector of placebo lags to apply.}
+\item{degrees}{Vector of polynomial degrees for trend fitting.}
+
+\item{horizons}{Vector of forecast horizons to estimate.}
+
+\item{lags}{Integer vector of placebo lags (years moved earlier), e.g. 0:2 or 1:3.}
+
+\item{se_method}{Method for standard errors: "analytic", "bootstrap", "clustered", "unitwise".}
+
+\item{n_bootstrap}{Number of bootstrap repetitions (only if \code{se_method} == "bootstrap").}
+
+\item{covariate_vars}{Optional vector of column names to include as covariates.}
+
+\item{beta_estimator}{Pooled beta estimation method: "none", "ols", "iv", or "unitwise".}
+
+\item{min_iv_lag}{Minimum lag for IV estimation (if used).}
+
+\item{max_iv_lag}{Maximum lag for IV estimation (if used).}
+
+\item{control_group_value}{Optional. If set (e.g., FALSE), DFAT mode is activated (requires \code{treated}).}
+
+\item{forecast_lag}{Number of periods to wait after treatment before forecasting begins (0 = in treatment year).}
+
+\item{pretreatment_window}{"full" or "minimal".}
 }
 \value{
-Data.frame of placebo FAT results.
+A list with:
+\describe{
+\item{results}{Data frame with summary estimates across lags:
+\code{deg, hh, llag, FAT, sdFAT}.}
+\item{predictions}{Data frame with unit-level observed and predicted values, stacked across lags, with \code{llag}.}
+}
 }
 \description{
-Compute Placebo FAT estimates
+Runs FAT or DFAT after pretending treatment happened earlier by each placebo lag.
+Fully reuses \code{estimate_fat()} so all current package options/logic apply.
 }
