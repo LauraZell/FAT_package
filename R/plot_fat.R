@@ -181,9 +181,7 @@ plot_fat_dfat_avg_trajectory <- function(predictions_df, mode = c("fat", "dfat")
 #' Plot FAT / DFAT with Confidence Bands
 #'
 #' @param fat_df Data frame of summary results. Must include: hh, FAT, sdFAT, deg.
-#'               If a column \code{llag} exists (from placebo runs), you can select which lag to plot.
-#' @param llag If \code{fat_df} contains a column \code{llag}, choose which placebo lag to plot (e.g., 2).
-#'             Ignored if \code{llag} column is absent.
+#'               Can also include 'lag' (from placebo runs), but no user selection is needed.
 #' @param ci_level Confidence level for the band (default 0.95).
 #' @param facet_by_degree Logical. Facet one panel per degree. Default TRUE.
 #' @param show_points Logical. Overlay points on the line. Default TRUE.
@@ -192,9 +190,7 @@ plot_fat_dfat_avg_trajectory <- function(predictions_df, mode = c("fat", "dfat")
 #'
 #' @return A ggplot object.
 #' @export
-#'
 plot_fat_ci <- function(fat_df,
-                        llag = NULL,
                         ci_level = 0.95,
                         facet_by_degree = TRUE,
                         show_points = TRUE,
@@ -202,19 +198,11 @@ plot_fat_ci <- function(fat_df,
                         y_label = "FAT (estimate)") {
   requireNamespace("ggplot2", quietly = TRUE)
   requireNamespace("dplyr", quietly = TRUE)
+  requireNamespace("scales", quietly = TRUE)
 
   df <- fat_df
 
-  # If this is a placebo result table, optionally filter by chosen lag
-  if ("llag" %in% names(df)) {
-    if (is.null(llag)) {
-      stop("Detected a placebo results table (column 'llag' present). Please set `llag = ...` to choose which lag to plot.")
-    }
-    df <- dplyr::filter(df, .data$llag == !!llag)
-    if (nrow(df) == 0) stop("No rows found for the requested `llag`.")
-  }
-
-  # Keep necessary columns and compute CI
+  # Compute CI
   z <- stats::qnorm(0.5 + ci_level / 2)
   df <- df |>
     dplyr::select(dplyr::all_of(c("hh", "FAT", "sdFAT", "deg")), dplyr::everything()) |>
@@ -224,8 +212,10 @@ plot_fat_ci <- function(fat_df,
       deg   = factor(.data$deg)
     )
 
-  p <- ggplot2::ggplot(df, ggplot2::aes(x = .data$hh, y = .data$FAT, group = .data$deg, color = .data$deg, fill = .data$deg)) +
-    ggplot2::geom_ribbon(ggplot2::aes(ymin = .data$lower, ymax = .data$upper), alpha = 0.15, color = NA) +
+  p <- ggplot2::ggplot(df, ggplot2::aes(x = .data$hh, y = .data$FAT,
+                                        group = .data$deg, color = .data$deg, fill = .data$deg)) +
+    ggplot2::geom_ribbon(ggplot2::aes(ymin = .data$lower, ymax = .data$upper),
+                         alpha = 0.15, color = NA) +
     ggplot2::geom_line(linewidth = 0.7)
 
   if (show_points) {
@@ -244,7 +234,7 @@ plot_fat_ci <- function(fat_df,
       fill  = "Degree",
       title = title
     ) +
-    ggplot2::scale_x_continuous(breaks = scales::breaks_width(1)) +  # ensure integer ticks only
+    ggplot2::scale_x_continuous(breaks = scales::breaks_width(1)) +  # integer ticks only
     ggplot2::theme_minimal() +
     ggplot2::theme(
       panel.grid.minor = ggplot2::element_blank(),
@@ -255,68 +245,17 @@ plot_fat_ci <- function(fat_df,
 }
 
 
-
-#' #' Plot FAT or DFAT trajectories for observed vs. forecasted values
-#' #'
-#' #' @param predictions_df A dataframe with observed and forecasted outcomes, e.g. `results_fat$predictions`
-#' #' @param mode Character, either "fat" or "dfat"
-#' #' @param unit_var Character, name of the unit identifier (e.g. "state")
-#' #' @param time_var Character, name of the time variable (e.g. "Year")
-#' #' @param outcome_var Character, observed outcome variable (e.g. "ln_age_mort_rate")
-#' #' @param pred_var Character, forecasted value variable (e.g. "preds")
-#' #'
-#' #' @return A ggplot object showing average observed and forecasted trajectories
-#' #' @export
-#' plot_fat_dfat_trajectory <- function(predictions_df,
-#'                                      mode = c("fat", "dfat"),
-#'                                      unit_var = "state",
-#'                                      time_var = "Year",
-#'                                      outcome_var = "ln_age_mort_rate",
-#'                                      pred_var = "preds") {
+#' Plot FAT or DFAT trajectories for observed vs. forecasted values
 #'
-#'   mode <- match.arg(mode)
+#' @param predictions_df A dataframe with observed and forecasted outcomes, e.g. `results_fat$predictions`
+#' @param mode Character, either "fat" or "dfat"
+#' @param unit_var Character, name of the unit identifier (e.g. "state")
+#' @param time_var Character, name of the time variable (e.g. "Year")
+#' @param outcome_var Character, observed outcome variable (e.g. "ln_age_mort_rate")
+#' @param pred_var Character, forecasted value variable (e.g. "preds")
 #'
-#'   # === Grouping logic ===
-#'   if (mode == "dfat") {
-#'     if (!"treated" %in% names(predictions_df)) stop("DFAT mode requires a 'treated' column.")
-#'     predictions_df <- predictions_df %>%
-#'       mutate(group = ifelse(treated == 1, "Treated", "Control"))
-#'   } else {
-#'     predictions_df$group <- "Treated"
-#'   }
-#'
-#'   # === Reshape into long format ===
-#'   df_long <- predictions_df %>%
-#'     select(deg, !!sym(time_var), !!sym(unit_var), group,
-#'            obs = !!sym(outcome_var),
-#'            pred = !!sym(pred_var)) %>%
-#'     pivot_longer(cols = c("obs", "pred"), names_to = "type", values_to = "value") %>%
-#'     filter(!is.na(value))  # Drop NAs (especially forecasts before treatment year)
-#'
-#'   # === Average over groups per year ===
-#'   df_avg <- df_long %>%
-#'     group_by(deg, group, !!sym(time_var), type) %>%
-#'     summarise(value = mean(value, na.rm = TRUE), .groups = "drop")
-#'
-#'   # === Final plot ===
-#'   ggplot(df_avg, aes(x = .data[[time_var]], y = value, color = type, linetype = type)) +
-#'     geom_line(size = 1) +
-#'     facet_wrap(~ deg, ncol = 1, labeller = label_both) +
-#'     scale_color_manual(values = c("obs" = "black", "pred" = "blue"),
-#'                        labels = c("Observed", "Forecasted")) +
-#'     scale_linetype_manual(values = c("obs" = "solid", "pred" = "dashed")) +
-#'     scale_x_continuous(breaks = scales::pretty_breaks(n = 10)) +
-#'     theme_minimal(base_size = 13) +
-#'     theme(legend.position = "bottom") +
-#'     labs(
-#'       title = paste0("Group-Averaged ", toupper(mode), " Trajectories"),
-#'       subtitle = "Observed vs Forecasted Outcomes by Group and Polynomial Degree",
-#'       x = "Year",
-#'       y = "Outcome Value",
-#'       color = "Type",
-#'       linetype = "Type"
-#'     )
-#'
+#' @return A ggplot object showing average observed and forecasted trajectories
+#' @export
 
 plot_fat_dfat_trajectories <- function(predictions_df,
                                        mode = c("fat", "dfat"),

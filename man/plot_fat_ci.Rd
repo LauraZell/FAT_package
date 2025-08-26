@@ -6,7 +6,6 @@
 \usage{
 plot_fat_ci(
   fat_df,
-  llag = NULL,
   ci_level = 0.95,
   facet_by_degree = TRUE,
   show_points = TRUE,
@@ -16,10 +15,7 @@ plot_fat_ci(
 }
 \arguments{
 \item{fat_df}{Data frame of summary results. Must include: hh, FAT, sdFAT, deg.
-If a column \code{llag} exists (from placebo runs), you can select which lag to plot.}
-
-\item{llag}{If \code{fat_df} contains a column \code{llag}, choose which placebo lag to plot (e.g., 2).
-Ignored if \code{llag} column is absent.}
+Can also include 'lag' (from placebo runs), but no user selection is needed.}
 
 \item{ci_level}{Confidence level for the band (default 0.95).}
 
