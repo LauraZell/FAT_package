@@ -2,23 +2,7 @@
 % Please edit documentation in R/plot_fat.R
 \name{plot_fat_dfat_trajectories}
 \alias{plot_fat_dfat_trajectories}
-\title{#' Plot FAT or DFAT trajectories for observed vs. forecasted values
-#'
-#' @param predictions_df A dataframe with observed and forecasted outcomes, e.g. \code{results_fat$predictions}
-#' @param mode Character, either "fat" or "dfat"
-#' @param unit_var Character, name of the unit identifier (e.g. "state")
-#' @param time_var Character, name of the time variable (e.g. "Year")
-#' @param outcome_var Character, observed outcome variable (e.g. "ln_age_mort_rate")
-#' @param pred_var Character, forecasted value variable (e.g. "preds")
-#'
-#' @return A ggplot object showing average observed and forecasted trajectories
-#' @export
-plot_fat_dfat_trajectory <- function(predictions_df,
-mode = c("fat", "dfat"),
-unit_var = "state",
-time_var = "Year",
-outcome_var = "ln_age_mort_rate",
-pred_var = "preds") {}
+\title{Plot FAT or DFAT trajectories for observed vs. forecasted values}
 \usage{
 plot_fat_dfat_trajectories(
   predictions_df,
@@ -27,51 +11,22 @@ plot_fat_dfat_trajectories(
   pred_var = "preds"
 )
 }
+\arguments{
+\item{predictions_df}{A dataframe with observed and forecasted outcomes, e.g. \code{results_fat$predictions}}
+
+\item{mode}{Character, either "fat" or "dfat"}
+
+\item{outcome_var}{Character, observed outcome variable (e.g. "ln_age_mort_rate")}
+
+\item{pred_var}{Character, forecasted value variable (e.g. "preds")}
+
+\item{unit_var}{Character, name of the unit identifier (e.g. "state")}
+
+\item{time_var}{Character, name of the time variable (e.g. "Year")}
+}
+\value{
+A ggplot object showing average observed and forecasted trajectories
+}
 \description{
-mode <- match.arg(mode)
+Plot FAT or DFAT trajectories for observed vs. forecasted values
 }
-\section{=== Grouping logic ===}{
-if (mode == "dfat") {
-if (!"treated" \%in\% names(predictions_df)) stop("DFAT mode requires a 'treated' column.")
-predictions_df <- predictions_df \%>\%
-mutate(group = ifelse(treated == 1, "Treated", "Control"))
-} else {
-predictions_df$group <- "Treated"
-}
-}
-
-\section{=== Reshape into long format ===}{
-df_long <- predictions_df \%>\%
-select(deg, !!sym(time_var), !!sym(unit_var), group,
-obs = !!sym(outcome_var),
-pred = !!sym(pred_var)) \%>\%
-pivot_longer(cols = c("obs", "pred"), names_to = "type", values_to = "value") \%>\%
-filter(!is.na(value))  # Drop NAs (especially forecasts before treatment year)
-}
-
-\section{=== Average over groups per year ===}{
-df_avg <- df_long \%>\%
-group_by(deg, group, !!sym(time_var), type) \%>\%
-summarise(value = mean(value, na.rm = TRUE), .groups = "drop")
-}
-
-\section{=== Final plot ===}{
-ggplot(df_avg, aes(x = .data[\link{time_var}], y = value, color = type, linetype = type)) +
-geom_line(size = 1) +
-facet_wrap(~ deg, ncol = 1, labeller = label_both) +
-scale_color_manual(values = c("obs" = "black", "pred" = "blue"),
-labels = c("Observed", "Forecasted")) +
-scale_linetype_manual(values = c("obs" = "solid", "pred" = "dashed")) +
-scale_x_continuous(breaks = scales::pretty_breaks(n = 10)) +
-theme_minimal(base_size = 13) +
-theme(legend.position = "bottom") +
-labs(
-title = paste0("Group-Averaged ", toupper(mode), " Trajectories"),
-subtitle = "Observed vs Forecasted Outcomes by Group and Polynomial Degree",
-x = "Year",
-y = "Outcome Value",
-color = "Type",
-linetype = "Type"
-)
-}
-
