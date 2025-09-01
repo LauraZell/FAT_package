@@ -110,8 +110,8 @@ fit_common_trend <- function(data,
     model <- lm(formula, data = pre_data)
   }
 
-  print(paste("Fitting model for unit:", unit, "with degree:", degree))
-  print(summary(model))
+  #print(paste("Fitting model for unit:", unit, "with degree:", degree))
+  #print(summary(model))
 
   # ==== Predict only for post-treatment years ====
   # New: restrict to horizon hh
@@ -121,8 +121,8 @@ fit_common_trend <- function(data,
 
   post_data$preds <- predict(model, newdata = post_data)
 
-  print(post_data)
-  print(post_data$preds)
+  #print(post_data)
+  #print(post_data$preds)
 
   # Re-add covariate contribution if previously subtracted
   if (!is.null(beta_hat) && !is.null(covariate_vars)) {
