@@ -8,10 +8,23 @@ vignette: >
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(
-  collapse = TRUE,
-  comment = "#>"
-)
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>", fig.width = 7, fig.height = 4.5)
+
+suppressPackageStartupMessages({
+  if (requireNamespace("fatEstimator", quietly = TRUE)) {
+    library(fatEstimator)
+  } else if (requireNamespace("devtools", quietly = TRUE) && file.exists("../DESCRIPTION")) {
+    # Local dev render: knit from vignettes/ using source in package root
+    devtools::load_all("..", quiet = TRUE)
+  } else {
+    stop("Package 'fatEstimator' is not installed and package source not found at '..'.")
+  }
+
+  # Other vignette deps:
+  library(dplyr)
+  library(tidyr)
+  library(ggplot2)
+})      
 ```
 
 
@@ -75,6 +88,67 @@ The choice of $q_i$ and $R_i$ involves a trade-off:
 
 In practice, we recommend trying a small set of values: $q_i \in {0, 1, 2, 3}$, and choosing $R_i$ as large as possible unless pre-trends suggest instability.
 
+```{r simulate-panel, echo=TRUE, message=FALSE}
+# Minimal simulated panel used across examples
+library(dplyr); library(tidyr);
+
+# Parameters
+n_units <- 20
+n_years <- 15
+min_year <- 1995
+unit_names <- paste0("state", 1:n_units)
+
+data_list <- lapply(unit_names, function(unit) {
+  treat_year <- sample(2004:2007, 1)  # Treatment years between 2004 and 2007
+  years <- min_year:(min_year + n_years - 1)
+
+  tibble::tibble(
+    state = unit,
+    Year = years,
+    adopt_year = treat_year,
+    timeToTreat = Year - treat_year,
+    covariate1 = rnorm(n_years, mean = 0, sd = 1),
+    covariate2 = rnorm(n_years, mean = 0, sd = 1),
+    instrument = lag(covariate1, 2),
+    ln_age_mort_rate = 3 + 0.05 * (years - min_year) - 0.2 * (years >= treat_year) +
+      0.3 * rnorm(n_years) + 0.5 * rnorm(1)  # base trend + noise + unit FE
+  )
+})
+
+# Combine into panel
+sim_data <- dplyr::bind_rows(data_list)
+
+# Clean up instrument column (remove NA due to lag)
+sim_data <- dplyr::group_by(sim_data, state) %>%
+  dplyr::mutate(instrument = dplyr::lag(covariate1, 2)) %>%
+  dplyr::ungroup()
+
+head(sim_data)
+```
+
+```{r fat-estimation, echo=TRUE, message=FALSE}
+fat_base <- estimate_fat(
+  data                = sim_data,
+  unit_var            = "state",
+  time_var            = "Year",
+  outcome_var         = "ln_age_mort_rate",
+  treat_time_var      = "adopt_year",
+  degrees             = 0:3,
+  horizons            = 1:3,
+  se_method           = "analytic",
+  beta_estimator      = "none",
+  forecast_lag        = 0,          # forecast starts in adoption year
+  pretreatment_window = "full"      # use all pre-treatment years available
+)
+
+fat_base$results
+```
+
+``` {r plot FAT results, echo=FALSE, message=FALSE}
+p_fat <- plot_fat_ci(fat_base$results, title = "FAT with 95% CI")
+p_fat
+
+```
 
 #### Theoretical Justification
 Under suitable conditions on the data generating process (DGP), the forecast $\widehat{y}_{i, \tau + h}(0)$ is **unbiased on average**, i.e.: 
@@ -188,7 +262,33 @@ Use homogeneous coefficients when:
 - the polynomial trend must provide an adequate approximation of residual dynamics,
 - unbiasedness of the overall forecast depends on both the accuracy of $\widehat{\beta}$ and the trend specification. 
 
-In the `fatEstimator` package, this option is activated using `beta_estimator = "ols"` or `"iv"`.
+In the `fatEstimator` package, this option is activated using `beta_estimator = "ols"` or `"iv"` (and set `min_iv_lag` / `max_iv_lag` for IV).
+
+```{r model-based-fat-iv, echo=TRUE, message=FALSE}
+fat_iv <- estimate_fat(
+  data                = sim_data,
+  unit_var            = "state",
+  time_var            = "Year",
+  outcome_var         = "ln_age_mort_rate",
+  treat_time_var      = "adopt_year",
+  degrees             = 0:3,
+  horizons            = 1:3,
+  se_method           = "analytic",
+  covariate_vars      = c("covariate1", "covariate2"),
+  beta_estimator      = "iv",
+  min_iv_lag          = 2,
+  max_iv_lag          = 2,
+  forecast_lag        = 0,
+  pretreatment_window = "full"
+)
+
+fat_iv$results
+
+```
+
+``` {r plot FAT results with covariates, echo=FALSE, message=FALSE}
+plot_fat_ci(fat_iv$results, title = "FAT with covariates (IV), 95% CI")
+```
 
 
 ### 2.2 Heterogeneous Coefficients 
@@ -217,7 +317,6 @@ Use heterogeneous coefficients when:
 - Trend and covariate effects must be identifiable from the data for each unit.
 
 
-
 ```{r model-summary-table, echo=FALSE, message=FALSE}
 library(knitr)
 
@@ -231,6 +330,29 @@ tradeoff_table <- data.frame(
 
 # Render as kable
 kable(tradeoff_table, align = "llll")
+```
+
+
+```{r fat-unitwise, echo=TRUE, message=FALSE}
+fat_unitwise <- estimate_fat(
+  data                = sim_data,
+  unit_var            = "state",
+  time_var            = "Year",
+  outcome_var         = "ln_age_mort_rate",
+  treat_time_var      = "adopt_year",
+  degrees             = 1:2,        # unitwise requires at least linear
+  horizons            = 1:3,
+  se_method           = "unitwise",
+  covariate_vars      = c("covariate1", "covariate2"),
+  beta_estimator      = "unitwise",
+  forecast_lag        = 0,
+  pretreatment_window = "full"   # minimal window for speed
+)
+
+fat_unitwise$results
+```
+``` {r plot FAT results with heterogeneous covariates, echo=FALSE, message=FALSE}
+plot_fat_ci(fat_unitwise$results, title = "Unitwise FAT (heterogeneous), 95% CI")
 ```
 
 
@@ -259,7 +381,7 @@ This means:
 - The average post-treatment forecast deviation for the control group is subtracted from that of the treated group.
 
 
-In DFAT mode, treated and control units are forecast from a common reference year to ensure valid comparison of forecast errors. To do this, the 'fatEstimator' package aligns all units to the median year among the treated units.
+In DFAT mode, treated and control units are forecast from a common reference year to ensure valid comparison of forecast errors. To do this, in DFAT mode, the package aligns units to the median treated adoption year to ensure common reference timing.
 
 Note: If all treated units adopt in the same year, this median-based alignment has no effect—treated and control units are both aligned to the actual treatment year.
 This choice is crucial for avoiding bias. If treated units used their actual adoption year while control units used a shared or arbitrary baseline, the resulting forecast horizons would differ. Such asymmetry would bias the group comparison in Equation (7).
@@ -286,6 +408,77 @@ To use DFAT in the `fatEstimator package`:
 - Specify `control_group_value = FALSE` to define which units are used as controls.
 - The package fits separate models for each group and computes the difference in FATs post-treatment.
 
+```{r sim-data-with-controls, echo=TRUE, message=FALSE}
+set.seed(42)
+
+# Parameters
+n_units <- 40
+n_years <- 10
+units <- paste0("state", 1:n_units)
+years <- 2000 + 0:(n_years - 1)
+
+# Simulate unit-level data
+sim_data_with_controls <- expand.grid(state = units, Year = years)
+sim_data_with_controls <- sim_data_with_controls[order(sim_data_with_controls$state,
+                                                       sim_data_with_controls$Year), ]
+
+# Half treated, half control
+treated_units <- sample(units, n_units / 2)
+sim_data_with_controls$treated <- sim_data_with_controls$state %in% treated_units
+
+# Assign adoption year only to treated units
+sim_data_with_controls$adopt_year <- ifelse(sim_data_with_controls$treated,
+                                            sample(2003:2006, length(treated_units), replace = TRUE)[
+                                              match(sim_data_with_controls$state[sim_data_with_controls$treated], treated_units)
+                                            ],
+                                            NA)
+
+# Time to treatment
+sim_data_with_controls$time_to_treat <- sim_data_with_controls$Year - sim_data_with_controls$adopt_year
+
+# Simulate covariates and outcome
+sim_data_with_controls$covariate1 <- rnorm(nrow(sim_data_with_controls))
+sim_data_with_controls$covariate2 <- rnorm(nrow(sim_data_with_controls))
+
+# Simulate true untreated outcome
+sim_data_with_controls$y0 <- with(sim_data_with_controls,
+  0.5 * covariate1 - 0.3 * covariate2 + 0.05 * (Year - 2000) +
+    rnorm(nrow(sim_data_with_controls), sd = 0.2)
+)
+
+# Add treatment effect after adoption for treated units
+sim_data_with_controls$ln_age_mort_rate <- sim_data_with_controls$y0 +
+  ifelse(sim_data_with_controls$treated &
+           !is.na(sim_data_with_controls$adopt_year) &
+           sim_data_with_controls$Year > sim_data_with_controls$adopt_year,
+         0.25, 0)
+
+head(sim_data_with_controls)
+```
+
+
+```{r dfat-example, echo=TRUE, message=FALSE}
+dfat_out <- estimate_fat(
+  data                = sim_data_with_controls,
+  unit_var            = "state",
+  time_var            = "Year",
+  outcome_var         = "ln_age_mort_rate",
+  treat_time_var      = "adopt_year",
+  degrees             = 0:2,
+  horizons            = 1:3,
+  se_method           = "analytic",
+  beta_estimator      = "none",
+  control_group_value = FALSE,   # requires 'treated' in data
+  forecast_lag        = 0,
+  pretreatment_window = "full"
+)
+
+dfat_out$results
+```
+
+``` {r plot DFAT results, echo=FALSE, message=FALSE}
+plot_fat_ci(dfat_out$results, title = "DFAT with 95% CI")
+```
 
 #### Practical Advice
 If results differ substantially between FAT and DFAT:
@@ -304,20 +497,16 @@ If results differ substantially between FAT and DFAT:
 
 1. Prepare your data
 - Your dataset must be in long-format and contain:
-   - a unique unit identifier (e.g., state)
-   - a time variable (e.g., year),
-   - the outcome variable (e.g., a fiscal indicator),
-   - the treatment time (year of intervention) for each unit,
-   - optionally: covariates and a treated column (for DFAT).
-2. Estimate forecasted effects
-  - Call `estimate_fat()` with appropriate arguments for your design. 
-  - Choose the estimator type via `beta_estimator` (see below).
+   - a unique unit identifier (e.g., `state`), a time variable (e.g., `Year`), the outcome variable, the treatment time (`adopt_year`) for each unit, and optionally covariates and a `treated` column (for DFAT).
+2. Estimate effects with `estimate_fat()`
+  - set `degrees`, `horizons`, `forecast_lag`, and `pretreatment_window` to define the forecast model,
+  - choose `beta_estimator` (trend-only "`none`", pooled "`ols`"/"`iv`", or "`unitwise`").
 3. Interpret results:
-   - `fat_results$results`: summary table of FAT estimates and standard errors across degrees and horizons.
-   - `fat_results$predictions`: unit-level observed and predicted values for plotting or diagnostic checks.
-   - `plot_fat()`: standard plot of treatment effects over forecast horizons.
+   - `$results`: summary of estimates and standard errors across degrees and horizons.
+   - `$predictions`: unit-level observed and predicted values for plotting and diagnostic checks.
+   - `plot_fat_ci()`: visualize FAT/DFAT + CI ribbons over forecast horizon only.
    - `plot_fat_dfat_trajectories()`: plots average observed and forecasted paths for treated (and control) units.
-
+   
 
 ### 4.2 Key Arguments for `estimate_fat()`
 
@@ -325,7 +514,8 @@ If results differ substantially between FAT and DFAT:
 knitr::kable(
   data.frame(
     Argument = c("`unit_var`", "`time_var`", "`outcome_var`", "`treat_time_var`",
-                 "`degrees`", "`horizons`", "`beta_estimator`", "`control_group_value`", "`se`"),
+                 "`degrees`", "`horizons`", "`beta_estimator`", "`control_group_value`", "`se_method`",
+                 "`forecast_lag`", "`pretreatment_window`"),
     Description = c(
       "Unique unit identifier (e.g., municipality ID)",
       "Time index (e.g., year)",
@@ -334,8 +524,10 @@ knitr::kable(
       "Polynomial degrees for trend fitting (e.g., `0:3`)",
       "Forecast horizons post-treatment (e.g., `1:5`)",
       "`\"none\"` (default), `\"ols\"`, `\"iv\"`, or `\"unitwise\"`",
-      "Set to `FALSE` for DFAT (requires `treated` column in data)",
-      "`\"analytic\"`, `\"bootstrap\"`, `\"clustered\"`, or `\"unitwise\"`"
+      "Set to `FALSE` for DFAT (requires `treated` column)",
+      "`\"analytic\"`, `\"bootstrap\"`, `\"clustered\"`, or `\"unitwise\"`",
+      "Periods to wait after treatment before forecasting (0 = in treatment year)",
+      "`\"full\"` or `\"minimal\"` pre-treatment fit window"
     )
   ),
   align = c("l", "l")
@@ -378,32 +570,38 @@ The quality of FAT estimates hinges on the validity of the forecasting model. Re
 - If significant “effects” are found pre-treatment, this suggests that the model may be misspecified.
 - This is especially important in the presence of anticipatory behavior or non-stationary noise.
 
-**Forecast Fit Diagnostics**
 
+```{r placebo-check, echo=TRUE, message=FALSE}
+placebo_out <- estimate_placebo_fat(
+  data                = sim_data,
+  unit_var            = "state",
+  time_var            = "Year",
+  outcome_var         = "ln_age_mort_rate",
+  treat_time_var      = "adopt_year",
+  degrees             = 0:2,
+  horizons            = 1:3,
+  # lag = 2,  # default
+  se_method           = "analytic",
+  beta_estimator      = "none",
+  forecast_lag        = 0,
+  pretreatment_window = "full"
+)
+
+placebo_out$results
+```
+``` {r plot Placebo results, echo=FALSE, message=FALSE}
+plot_fat_ci(placebo_out$results, title = "Placebo FAT (lag = 2) with 95% CI")
+```
+
+**Other checks**
 - Visualize the pre-treatment fit using `plot_fat()` or the `results$predictions` object.
-- Check whether forecasts closely track observed values before treatment.
-
-**Sensitivity to Polynomial Degree**
-
-- Re-estimate using different degrees \( q_i \). Are results robust?
-- Use domain knowledge or visual inspection to guide degree selection.
+- Check sensitivity to ploynomial degree by re-estimate using different degrees \( q_i \). (Use domain knowledge or visual inspection to guide degree selection.)
 
 
 ### 4.5 Interpretation and Limitations
 
-The FAT estimator provides a flexible and data-driven approach to estimating treatment effects when no good control group is available. However, forecasting is not identification by magic.
-
-**What FAT Can Do**
-
-- Recover causal ATT if the forecast is valid,
-- Avoid reliance on control group comparability,
-- Handle staggered adoption and short panels.
-
-**What FAT Cannot Do**
-
-- Guarantee unbiasedness without model validation,
-- Adjust for unobserved shocks unless differenced (see DFAT),
-- Automatically separate anticipation from treatment effects.
+FAT can recover causal ATT if forecasts are valid, handle staggered adoption and short panels, and avoid reliance on external controls.
+FAT cannot guarantee unbiasedness without validation, absorb unobserved shocks unless differenced (DFAT), or separate anticipation without careful timing choices.
 
 FAT trades assumptions about other units for assumptions about how each unit would have evolved in the absence of treatment. Its reliability depends on how predictable the untreated path really is, therefore:
 
@@ -411,19 +609,6 @@ FAT trades assumptions about other units for assumptions about how each unit wou
 - Verify model fit pre-treatment,
 - Run placebo checks to assess forecast validity,
 - Avoid extrapolating far beyond the pre-treatment period.
-
-
-
-
-## 5. Simulated Example (to be inserted)
-
-```{r, eval=FALSE}
-# Simulated code here
-```
-
-
-
-
 
 
 # References
