@@ -20,7 +20,7 @@ estimate_fat(
   min_iv_lag = 2,
   max_iv_lag = 2,
   control_group_value = NULL,
-  forecast_lag = 0,
+  forecast_lag = 1,
   pretreatment_window = c("full", "minimal")
 )
 }
