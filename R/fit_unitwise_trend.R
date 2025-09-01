@@ -19,7 +19,10 @@
 #' @param beta_hat Optional named vector of pooled covariate coefficients.
 #' @param forecast_lag Number of periods to wait after treatment before forecasting begins.
 #'        Default is 0 (forecast starts in treatment year).
-#' @param pretreatment_window Character. Either "full" to use all available pre-treatment observations, or "minimal" to use exactly (degree + 1) most recent ones.
+#' @param pretreatment_window Character. Either:
+#'   "full" = use all pre-treatment observations; or
+#'   "minimal" = use exactly degree+1+p most recent pre-treatment periods,
+#'   where p = length(covariate_vars). Ensures just-identified unitwise fit.
 #'
 #' @return A data frame with unit, time, outcome, predicted values (`preds`),
 #'         and treatment time.
@@ -60,12 +63,18 @@ fit_unitwise_trend <- function(data,
 
   # Choose pre-treatment window
   pre_data <- subset(unit_data, timeToTreat < 0)
+
   if (pretreatment_window == "minimal") {
-    # take the (degree+1) most recent distinct times (and keep all rows at those times)
-    # Step 1: get the (degree+1) most recent distinct t's
+    # number of covariates
+    p <- if (is.null(covariate_vars)) 0L else length(covariate_vars)
+    # minimum rows needed: intercept + polynomial terms + covariates
+    # In "minimal" mode we take the (degree + 1) most recent pre-treatment times. But the unitwise model has (degree + 1 + p) free parameters (intercept + degree polynomial + p = length(covariate_vars) unit-specific β’s). Therefore:
+    required_n <- (degree + 1L) + p
+
+    # take the required_n most recent DISTINCT pre-treatment times
     distinct_t <- sort(unique(pre_data$timeToTreat), decreasing = TRUE)
-    keep_t     <- head(distinct_t, degree + 1)
-    # Step 2: keep all rows with those t's (handles duplicates if any)
+    keep_t     <- head(distinct_t, required_n)
+
     pre_data   <- pre_data[pre_data$timeToTreat %in% keep_t, , drop = FALSE]
   }
 
@@ -75,23 +84,21 @@ fit_unitwise_trend <- function(data,
 
   # Identification checks
   p <- if (is.null(covariate_vars)) 0L else length(covariate_vars)
-  # number of parameters to estimate = intercept (1) + degree polynomial + p covariates
   required_n <- (degree + 1L) + p
 
   if (n_pre_fit < required_n || dplyr::n_distinct(pre_data$timeToTreat) < (degree + 1L)) {
     warning(paste("Skipping unit:", unit,
                   "due to insufficient pre-treatment observations (need at least",
                   required_n, "rows and", degree + 1L, "distinct time points)."))
-    # return all years w/ NA preds so the caller can keep the pre-period for plotting
     return(
       dplyr::mutate(
         unit_data[, c(unit_var, time_var, outcome_var, treat_time_var), drop = FALSE],
-        timeToTreat   = unit_data[[time_var]] - unit_data[[treat_time_var]],
-        preds         = NA_real_,
-        hh            = 0L,
-        deg           = degree,
-        skipped       = TRUE,
-        n_pre_fit     = n_pre_fit,
+        timeToTreat    = unit_data[[time_var]] - unit_data[[treat_time_var]],
+        preds          = NA_real_,
+        hh             = 0L,
+        deg            = degree,
+        skipped        = TRUE,
+        n_pre_fit      = n_pre_fit,
         pre_years_used = pre_years_used
       )
     )

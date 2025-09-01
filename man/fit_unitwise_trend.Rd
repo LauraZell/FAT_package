@@ -41,7 +41,10 @@ fit_unitwise_trend(
 \item{forecast_lag}{Number of periods to wait after treatment before forecasting begins.
 Default is 0 (forecast starts in treatment year).}
 
-\item{pretreatment_window}{Character. Either "full" to use all available pre-treatment observations, or "minimal" to use exactly (degree + 1) most recent ones.}
+\item{pretreatment_window}{Character. Either:
+"full" = use all pre-treatment observations; or
+"minimal" = use exactly degree+1+p most recent pre-treatment periods,
+where p = length(covariate_vars). Ensures just-identified unitwise fit.}
 }
 \value{
 A data frame with unit, time, outcome, predicted values (\code{preds}),
