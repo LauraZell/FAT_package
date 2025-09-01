@@ -85,7 +85,6 @@ fit_common_beta_ols <- function(data,
 }
 
 
-
 #' Fit Pooled IV Model with Lagged Outcome (Homogeneous Beta)
 #'
 #' This function estimates a pooled IV model for covariate adjustment.

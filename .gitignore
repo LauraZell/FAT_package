@@ -3,3 +3,5 @@ Progress-report.html
 Progress-report.Rmd
 *.html
 vignettes/fat_vignette.html
+/doc/
+/Meta/

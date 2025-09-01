@@ -5,3 +5,5 @@
 ^packagesetup\\.R$
 ^fatEstimation\.Rproj$
 ^packagesetup\.R$
+^doc$
+^Meta$
