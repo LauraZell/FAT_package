@@ -51,12 +51,53 @@ estimate_fat <- function(data,
                          min_iv_lag = 2,
                          max_iv_lag = 2,
                          control_group_value = NULL,
-                         forecast_lag = 0,
+                         forecast_lag = 1,
                          pretreatment_window = c("full", "minimal")) {
   pretreatment_window <- match.arg(pretreatment_window)
 
   # Match estimator option
   beta_estimator <- match.arg(beta_estimator)
+
+  # --- argument validation for covariates vs estimator ---
+  # Ensure covariate_vars is a proper character vector when needed
+  is_missing_covars <- is.null(covariate_vars) || length(covariate_vars) == 0
+
+  if (beta_estimator == "unitwise") {
+    if (is_missing_covars) {
+      stop(
+        "beta_estimator = 'unitwise' requires 'covariate_vars' to be provided.\n",
+        "Hint: pass a character vector of column names, e.g., covariate_vars = c('x1','x2')."
+      )
+    }
+    # check existence
+    missing_cols <- setdiff(covariate_vars, names(data))
+    if (length(missing_cols) > 0) {
+      stop(
+        "The following 'covariate_vars' are not in 'data': ",
+        paste(missing_cols, collapse = ", "), "\n",
+        "Please ensure all covariates exist prior to calling estimate_fat()."
+      )
+    }
+  }
+
+  # (Recommended) enforce covariates for pooled estimators too
+  if (beta_estimator %in% c("ols", "iv")) {
+    if (is_missing_covars) {
+      stop(
+        "beta_estimator = '", beta_estimator,
+        "' requires 'covariate_vars'. Provide e.g. covariate_vars = c('x1','x2')."
+      )
+    }
+    missing_cols <- setdiff(covariate_vars, names(data))
+    if (length(missing_cols) > 0) {
+      stop(
+        "The following 'covariate_vars' are not in 'data': ",
+        paste(missing_cols, collapse = ", "), "\n",
+        "Please ensure all covariates exist prior to calling estimate_fat()."
+      )
+    }
+  }
+
 
   # Optional subsetting to user-specified units
   if (!is.null(units_to_include)) {
