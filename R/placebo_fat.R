@@ -38,7 +38,7 @@ estimate_placebo_fat <- function(data,
                                  units_to_include = NULL,
                                  degrees = 0:2,
                                  horizons = 1:5,
-                                 lags = 0:2,
+                                 p_lag = 2,
                                  se_method = "analytic",
                                  n_bootstrap = 1000,
                                  covariate_vars = NULL,
@@ -58,51 +58,35 @@ estimate_placebo_fat <- function(data,
     data <- data[data[[unit_var]] %in% units_to_include, ]
   }
 
-  # Storage
-  res_list <- list()
-  pred_list <- list()
+  # Build a pseudo-treatment column for the placebo lag
+  pseudo_col <- paste0(treat_time_var, "_placebo", p_lag)
+  df_placebo <- data
+  df_placebo[[pseudo_col]] <- df_placebo[[treat_time_var]] - p_lag
 
-  # Loop over placebo lags
-  for (llag in lags) {
-    # Build a pseudo-treatment column name to avoid mutating the original column
-    pseudo_col <- paste0(treat_time_var, "_placebo_llag", llag)
+  # Run your existing estimator with the pseudo treatment column
+  out <- estimate_fat(
+    data               = df_placebo,
+    unit_var           = unit_var,
+    time_var           = time_var,
+    outcome_var        = outcome_var,
+    treat_time_var     = pseudo_col,
+    units_to_include   = NULL,
+    degrees            = degrees,
+    horizons           = horizons,
+    se_method          = se_method,
+    n_bootstrap        = n_bootstrap,
+    covariate_vars     = covariate_vars,
+    beta_estimator     = beta_estimator,
+    min_iv_lag         = min_iv_lag,
+    max_iv_lag         = max_iv_lag,
+    control_group_value= control_group_value,
+    forecast_lag       = forecast_lag,
+    pretreatment_window= pretreatment_window
+  )
 
-    df_placebo <- data
-    df_placebo[[pseudo_col]] <- df_placebo[[treat_time_var]] - llag
-
-    # Run your existing estimator with the pseudo treatment column
-    out_llag <- estimate_fat(
-      data               = df_placebo,
-      unit_var           = unit_var,
-      time_var           = time_var,
-      outcome_var        = outcome_var,
-      treat_time_var     = pseudo_col,          # <— key handoff
-      units_to_include   = NULL,                # already applied above if provided
-      degrees            = degrees,
-      horizons           = horizons,
-      se_method          = se_method,
-      n_bootstrap        = n_bootstrap,
-      covariate_vars     = covariate_vars,
-      beta_estimator     = beta_estimator,
-      min_iv_lag         = min_iv_lag,
-      max_iv_lag         = max_iv_lag,
-      control_group_value= control_group_value,
-      forecast_lag       = forecast_lag,
-      pretreatment_window= pretreatment_window
-    )
-
-    # Tag with llag and collect
-    res_list[[length(res_list) + 1]] <- transform(out_llag$results, llag = llag)
-    pred_list[[length(pred_list) + 1]] <- transform(out_llag$predictions, llag = llag)
-  }
-
-  # Bind + enforce uniqueness on predictions just like estimate_fat does
-  results_df <- dplyr::bind_rows(res_list) |>
-    dplyr::select(deg, hh, llag, FAT, sdFAT) |>
-    dplyr::arrange(deg, hh, llag)
-
-  preds_df <- dplyr::bind_rows(pred_list) |>
-    dplyr::distinct(!!rlang::sym(unit_var), !!rlang::sym(time_var), deg, hh, llag, .keep_all = TRUE)
+  # Tag with lag
+  results_df <- dplyr::mutate(out$results, p_lag = p_lag)
+  preds_df   <- dplyr::mutate(out$predictions, p_lag = p_lag)
 
   list(results = results_df, predictions = preds_df)
 }

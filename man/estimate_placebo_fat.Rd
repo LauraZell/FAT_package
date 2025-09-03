@@ -13,7 +13,7 @@ estimate_placebo_fat(
   units_to_include = NULL,
   degrees = 0:2,
   horizons = 1:5,
-  lags = 0:2,
+  p_lag = 2,
   se_method = "analytic",
   n_bootstrap = 1000,
   covariate_vars = NULL,
@@ -42,8 +42,6 @@ estimate_placebo_fat(
 
 \item{horizons}{Vector of forecast horizons to estimate.}
 
-\item{lags}{Integer vector of placebo lags (years moved earlier), e.g. 0:2 or 1:3.}
-
 \item{se_method}{Method for standard errors: "analytic", "bootstrap", "clustered", "unitwise".}
 
 \item{n_bootstrap}{Number of bootstrap repetitions (only if \code{se_method} == "bootstrap").}
@@ -61,6 +59,8 @@ estimate_placebo_fat(
 \item{forecast_lag}{Number of periods to wait after treatment before forecasting begins (0 = in treatment year).}
 
 \item{pretreatment_window}{"full" or "minimal".}
+
+\item{lags}{Integer vector of placebo lags (years moved earlier), e.g. 0:2 or 1:3.}
 }
 \value{
 A list with:
