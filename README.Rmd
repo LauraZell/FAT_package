@@ -66,6 +66,7 @@ devtools::load_all()
 
 ## Citation
 
+
 If you use this package, please cite:
 
 Botosaru, I., Giacomini, R., & Weidner, M. (2024). Forecasted Average Treatment Effects in the Absence of a Control Group. Working Paper. arXiv:2401.02121 

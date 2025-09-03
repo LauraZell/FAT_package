@@ -1,93 +1,82 @@
 
-# fatEstimation
+# fatEstimator
 
-The `fatEstimation` R package implements the **Forecasted Average
-Treatment (FAT)** methodology for estimating causal effects when a clean
-control group is unavailable or unconvincing based on the research paper
-by Botosaru, Giacomini, and Weidner 2023 (link?).
+The **`fatEstimator`** R package implements the *Forecasted Average
+Treatment Effects (FAT)* methodology from [Botosaru, Giacomini, and
+Weidner (2024)](https://arxiv.org/abs/2401.02121), which allows for
+causal inference **without requiring a traditional control group**.
 
-It allows researchers and policy analysts to estimate treatment effects
-using **forecasted counterfactuals** based on pre-treatment trends.
+This method is especially useful in cases of:
 
-For a full example and methodological overview, see the [package
-vignette](https://your.package.website/articles/fat_vignette.html).
+- Universal or staggered treatment adoption,
+- Endogenous policy timing,
+- No clear or valid comparison units.
+
+Instead of comparing treated units to a control group, the package
+forecasts **unit-specific counterfactual outcomes** using pre-treatment
+trends, and estimates the treatment effect as the deviation from these
+forecasts.
+
+For a full overview, see the
+[**vignette**](./vignettes/fat_vignette.html) or run:
+
+``` r
+vignette("fat_vignette", package = "fatEstimator")
+```
 
 ------------------------------------------------------------------------
 
-## 🔍 Motivation
+## Motivation
 
-Traditional causal inference methods like DiD rely on finding comparable
-control units. The FAT approach bypasses this need by:
+Standard treatment effect estimators (e.g. Difference-in-Differences)
+depend on finding valid comparison units. This can be difficult when:
 
-- Fitting pre-treatment outcome trends for treated units individually
-- Forecasting what would have happened without treatment
-- Comparing the actual post-treatment outcomes to these forecasts
+- All units are eventually treated,
+- Treatment timing is endogenous,
+- Comparison groups differ structurally from treated units.
+
+The **FAT estimator** bypasses this by: - Fitting a unit-specific model
+to the *pre-treatment outcome history*, - Forecasting the counterfactual
+outcome path, - Estimating treatment effects as the difference between
+observed and forecasted outcomes.
+
+It is formally grounded in recent econometric theory and allows for
+flexible polynomial trends, covariates, placebo testing, and extensions
+with control groups (DFAT).
 
 ------------------------------------------------------------------------
 
-## 📦 Installation
+## Installation
 
-You can install the development version of the package directly from
-GitHub using:
+Install the development version from GitHub:
 
 ``` r
 # install.packages("remotes")
-remotes::install_github("laurazell/fatEstimation")
+remotes::install_github("laurazell/fatEstimator")
 
 # From local source (if you're developing it)
 devtools::load_all()
 ```
 
-## Key features
+## Features
 
-- Forecasts counterfactual outcomes using unit-specific pre-trends.
-- Supports multiple polynomial degrees and forecast horizons.
-- Provides analytic, clustered, and bootstrap standard errors.
-- Built-in diagnostic and placebo test functions.
+- Forecasted counterfactuals via unit-level polynomial trend regression
+- Supports multiple forecast horizons and degrees
+- Allows for model extensions with:
+  - Homogeneous and heterogeneous covariates
+  - Instrumental variables (IV) for endogeneity
+  - Difference-in-FAT (DFAT) when a noisy control group is available
+- Fast and flexible:
+  - Computes analytic, clustered, or bootstrap standard errors
+  - Diagnostics, placebo checks, and plotting functions built-in
 
-## Example using the cannabis_overdose dataset
+## Citation
 
-The package includes a cleaned dataset cannabis_overdose, derived from
-the study by Shover et al. It tracks opioid overdose mortality rates
-across U.S. states and the adoption of medical cannabis laws. (I assume
-we might not have the right to use this, when making the package public,
-but for now, it’s the data set for which we have FAT results for
-comparison.)
+If you use this package, please cite:
 
-``` r
-library(fatEstimation)
-
-data(cannabis_overdose)
-
-# Run FAT estimation for deg = 0:2, hh = 1:3
-results <- estimate_fat(
-  data = cannabis_overdose,
-  unit_var = "state",
-  time_var = "Year",
-  outcome_var = "ln_age_mort_rate",
-  treat_time_var = "adopt_year",
-  units_to_include = unique(cannabis_overdose$state),
-  degrees = 0:2,
-  horizons = 1:3,
-  se_method = "analytic"
-)
-
-print(results)
-
-# Plot results
-library(ggplot2)
-ggplot(results, aes(x = hh, y = FAT, color = as.factor(deg))) +
-  geom_point() +
-  geom_errorbar(aes(ymin = FAT - 1.96 * sdFAT, ymax = FAT + 1.96 * sdFAT)) +
-  geom_hline(yintercept = 0, linetype = "dashed") +
-  theme_minimal() +
-  labs(title = "Forecasted Average Treatment Effects",
-       x = "Horizon (Years after adoption)",
-       color = "Polynomial Degree")
-       
-# Diagnostic plot
-plot_fat_diagnostics(results)
-```
+Botosaru, I., Giacomini, R., & Weidner, M. (2024). Forecasted Average
+Treatment Effects in the Absence of a Control Group. Working Paper.
+arXiv:2401.02121
 
 ## License
 
