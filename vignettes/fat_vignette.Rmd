@@ -137,7 +137,7 @@ fat_base <- estimate_fat(
   horizons            = 1:3,
   se_method           = "analytic",
   beta_estimator      = "none",
-  forecast_lag        = 0,          # forecast starts in adoption year
+  forecast_lag        = 1,          # forecast starts in adoption year
   pretreatment_window = "full"      # use all pre-treatment years available
 )
 
@@ -197,7 +197,7 @@ knitr::kable(
 
   - desire for precision (larger $R_i$),
   - risk of trend instability (smaller $R_i$).
-  - The default is $R_i = q_i + 1$, the minimum needed to estimate $q_i$.
+  - The default is $R_i = q_i + 1$, the minimum needed to estimate $q_i$ (`minimal`).
   
 - Choose $h$ (forecast horizon) by considering:
   - How long after treatment you expect effects to manifest.
@@ -278,7 +278,7 @@ fat_iv <- estimate_fat(
   beta_estimator      = "iv",
   min_iv_lag          = 2,
   max_iv_lag          = 2,
-  forecast_lag        = 0,
+  forecast_lag        = 1,
   pretreatment_window = "full"
 )
 
@@ -304,7 +304,7 @@ $$
 (\widehat{c}^{(q_i, R_i)}, \widehat{\beta}^{(i)}) := \arg\min_{c \in \mathbb{R}^{q_i + 1}, \beta \in \mathbb{R}^{p}} \sum_{t \in T_i} \left( y_{it} - \sum_{k=0}^{q_i} c_k t^k - \beta x_{it} \right)^2 \tag{6.1}
 $$
 
-This is implemented in the package with `beta_estimator = "unitwise"`.
+It is important to note that while for the other specifications, "minimal" means we take (degree + 1) most recent pre-treatment times, the unitwise model has (intercept + degree polynomial + length(covariate_vars)) unit-specific β’s, therefore we take (degree + 1 + length(covariate_vars)) pretreatment periods. This is implemented in the package with `beta_estimator = "unitwise"`.
 
 Use heterogeneous coefficients when:
 
@@ -313,7 +313,7 @@ Use heterogeneous coefficients when:
 - You have enough pre-treatment data per unit to estimate covariate effects reliably.
 
 #### Requirements and Assumptions
-- Covariates must be available pre-treatment for each unit.
+- Covariates must be available pre-treatment for each unit. 
 - Trend and covariate effects must be identifiable from the data for each unit.
 
 
@@ -346,7 +346,7 @@ fat_unitwise <- estimate_fat(
   covariate_vars      = c("covariate1", "covariate2"),
   beta_estimator      = "unitwise",
   forecast_lag        = 0,
-  pretreatment_window = "full"   # minimal window for speed
+  pretreatment_window = "full"   
 )
 
 fat_unitwise$results
@@ -480,10 +480,15 @@ dfat_out$results
 plot_fat_ci(dfat_out$results, title = "DFAT with 95% CI")
 ```
 
+``` {r plot DFAT trajectories, echo=FALSE, message=FALSE}
+plot_fat_dfat_trajectories(predictions_df = dfat_out$predictions, mode = "dfat")
+```
+
 #### Practical Advice
 If results differ substantially between FAT and DFAT:
 
 - Consider whether unmodelled shocks are biasing the forecasts,
+
 - Or whether treatment spillovers invalidate the control group as a counterfactual.
 
 
@@ -520,13 +525,13 @@ knitr::kable(
       "Unique unit identifier (e.g., municipality ID)",
       "Time index (e.g., year)",
       "Variable to forecast (e.g., net debt, mortality)",
-      "Treatment adoption year (unit-specific)",
+      "Treatment adoption year (unit-specific) (e.g., `adopt_year`)",
       "Polynomial degrees for trend fitting (e.g., `0:3`)",
       "Forecast horizons post-treatment (e.g., `1:5`)",
       "`\"none\"` (default), `\"ols\"`, `\"iv\"`, or `\"unitwise\"`",
       "Set to `FALSE` for DFAT (requires `treated` column)",
       "`\"analytic\"`, `\"bootstrap\"`, `\"clustered\"`, or `\"unitwise\"`",
-      "Periods to wait after treatment before forecasting (0 = in treatment year)",
+      "Periods to wait after treatment before forecasting (default = 1; 1 year after treatment year)",
       "`\"full\"` or `\"minimal\"` pre-treatment fit window"
     )
   ),
@@ -578,12 +583,12 @@ placebo_out <- estimate_placebo_fat(
   time_var            = "Year",
   outcome_var         = "ln_age_mort_rate",
   treat_time_var      = "adopt_year",
-  degrees             = 0:2,
+  degrees             = 0:3,
   horizons            = 1:3,
-  # lag = 2,  # default
+  p_lag               = 2,  # default placebo lag
   se_method           = "analytic",
   beta_estimator      = "none",
-  forecast_lag        = 0,
+  forecast_lag        = 1,
   pretreatment_window = "full"
 )
 
@@ -594,8 +599,10 @@ plot_fat_ci(placebo_out$results, title = "Placebo FAT (lag = 2) with 95% CI")
 ```
 
 **Other checks**
-- Visualize the pre-treatment fit using `plot_fat()` or the `results$predictions` object.
-- Check sensitivity to ploynomial degree by re-estimate using different degrees \( q_i \). (Use domain knowledge or visual inspection to guide degree selection.)
+
+- Visualize the pre-treatment fit by plotting or using `plot_fat_dfat_trajectories()` after estimating the `$predictions` object.
+
+- Check sensitivity to polinomial degree by re-estimate using different degrees \( q_i \). (Use domain knowledge or visual inspection to guide degree selection.)
 
 
 ### 4.5 Interpretation and Limitations
