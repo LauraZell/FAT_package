@@ -17,79 +17,95 @@ fit_common_beta_ols <- function(data,
                                 time_var,
                                 unit_var,
                                 degree = 0,
-                                pretreatment_window = c("full", "minimal")) {
+                                pretreatment_window = c("full", "minimal", "manual"),
+                                pretreatment_years = NULL) {
+
   pretreatment_window <- match.arg(pretreatment_window)
 
-  # 1) Compute time_to_treat
-  df <- dplyr::mutate(
-    data,
-    time_to_treat = .data[[time_var]] - .data[[treat_time_var]]
-  )
+  # Build a pooled pre-treatment fram using the per-unit window rule
+  build_pre_for_unit <- function(df_u) {
+    pre_all <- df_u[df_u[[time_var]] - df_u[[treat_time_var]] < 0 &
+                      !is.na(df_u[[outcome_var]]), , drop = FALSE]
+    if (nrow(pre_all) == 0L) return(pre_all)
 
-  # 2) Keep strictly pre-treatment observations (< 0)
-  if (pretreatment_window == "full") {
-    df_pre <- dplyr::filter(df, time_to_treat < 0)
-  } else { # "minimal": take exactly (degree + 1) most-recent pre rows per unit
-    df_pre <- df |>
-      dplyr::filter(time_to_treat < 0) |>
-      dplyr::group_by(.data[[unit_var]]) |>
-      dplyr::arrange(dplyr::desc(time_to_treat), .by_group = TRUE) |>
-      dplyr::slice_head(n = degree + 1) |>
-      dplyr::ungroup()
-  }
+    if (pretreatment_window == "full") {
+      pre_all[order(pre_all[[time_var]]), , drop = FALSE]
 
-  # 3) Basic checks
-  if (!all(covariate_vars %in% names(df_pre))) {
-    missing_covars <- setdiff(covariate_vars, names(df_pre))
-    stop("Missing covariates in data: ", paste(missing_covars, collapse = ", "))
-  }
+    } else if (pretreatment_window == "minimal") {
+      need <- (degree + 1L) + max_iv_lag
+      ord  <- order(pre_all[[time_var]], decreasing = TRUE)
+      take <- seq_len(min(need, length(ord)))
+      idx  <- sort(ord[take], decreasing = FALSE)
+      pre_all[idx, , drop = FALSE]
 
-  # Drop rows with NA in outcome or covariates
-  df_pre <- df_pre |>
-    dplyr::filter(!is.na(.data[[outcome_var]])) |>
-    tidyr::drop_na(dplyr::all_of(covariate_vars))
+    } else { # "manual"
+      if (is.null(pretreatment_years) || !is.finite(pretreatment_years) || pretreatment_years < 1L) {
+        stop("When pretreatment_window = 'manual', provide a valid 'pretreatment_years' (>= 1).")
+      }
+      need <- ((degree + 1L) + max_iv_lag)
+      if (pretreatment_years < need) {
+        stop(sprintf("pretreatment_years = %d is too small for degree q = %d (need at least q+1+max_iv_lag = %d).",
+                     pretreatment_years, degree, need))
+      }
 
-  if (nrow(df_pre) == 0) {
-    stop("No pre-treatment observations available after filtering (time_to_treat < 0).")
-  }
-
-  if (pretreatment_window == "minimal") {
-    # Warn if some units contributed fewer than (degree+1) rows
-    counts <- df_pre |>
-      dplyr::count(.data[[unit_var]], name = "n_pre")
-    if (any(counts$n_pre < (degree + 1))) {
-      warning("Some units have fewer than (degree + 1) pre-treatment rows in 'minimal' mode.")
+      ord  <- order(pre_all[[time_var]], decreasing = TRUE)
+      take <- seq_len(min(as.integer(pretreatment_years), length(ord)))
+      idx  <- sort(ord[take], decreasing = FALSE)
+      pre_all[idx, , drop = FALSE]
     }
   }
 
-  # 4) Fit pooled OLS with only covariates
-  cov_formula <- stats::as.formula(
-    paste(outcome_var, "~", paste(covariate_vars, collapse = " + "))
-  )
-  model <- stats::lm(formula = cov_formula, data = df_pre)
+  # Split-apply-bind across units
+  units <- unique(data[[unit_var]])
+  pre_list <- lapply(units, function(u) build_pre_for_unit(data[data[[unit_var]] == u, , drop = FALSE]))
+  pre_pool <- do.call(rbind, pre_list)
 
-  # 5) Return only the covariate coefficients, in the order requested
-  bhat <- stats::coef(model)
-  # Ensure we return exactly the covariates (intercept dropped even if present)
-  bhat_covars <- bhat[covariate_vars]
-
-  # If any are completely un-identified, they'll be NA; warn rather than error
-  if (any(is.na(bhat_covars))) {
-    na_names <- names(bhat_covars)[is.na(bhat_covars)]
-    warning("Some pooled OLS covariate coefficients are NA (collinearity?): ",
-            paste(na_names, collapse = ", "),
-            ". They will propagate as NA into adjusted_outcome.")
+  if (is.null(pre_pool) || nrow(pre_pool) == 0L) {
+    stop("Pooled OLS: no usable pre-treatment observations after windowing.")
   }
 
-  return(bhat_covars)
+  # --- Identifiability check for pooled OLS ---
+  k <- length(covariate_vars)
+  if (k == 0L) stop("Pooled OLS requires at least one covariate in 'covariate_vars'.")
+  # Need at least k+1 total rows to estimate (including intercept)
+  if (nrow(pre_pool) <= k) {
+    stop(sprintf("Pooled OLS: too few pre-treatment rows (%d) relative to regressors (%d).",
+                 nrow(pre_pool), k))
+  }
+
+  # Ensure covariates exist and drop NA rows in covariates/outcome
+  missing_cols <- setdiff(covariate_vars, names(pre_pool))
+  if (length(missing_cols) > 0L) {
+    stop("Pooled OLS: missing covariates in data: ", paste(missing_cols, collapse = ", "))
+  }
+  keep <- stats::complete.cases(pre_pool[, c(outcome_var, covariate_vars), drop = FALSE])
+  pre_pool <- pre_pool[keep, , drop = FALSE]
+  if (nrow(pre_pool) <= k) {
+    stop("Pooled OLS: after removing NAs, not enough rows to estimate the model.")
+  }
+
+  # --- Fit pooled OLS on levels ---
+  rhs <- paste(covariate_vars, collapse = " + ")
+  fml <- stats::as.formula(paste(outcome_var, "~", rhs))
+  fit <- stats::lm(fml, data = pre_pool)
+
+  # Return named vector of coefficients for the covariates (exclude intercept)
+  beta <- stats::coef(fit)
+  beta <- beta[setdiff(names(beta), "(Intercept)")]
+  # Keep only covariates explicitly requested (preserve order)
+  beta <- beta[covariate_vars]
+  return(beta)
 }
 
 
 #' Fit Pooled IV Model with Lagged Outcome (Homogeneous Beta)
 #'
 #' This function estimates a pooled IV model for covariate adjustment.
+#' Pooled IV (AH-style) for common beta (pre-treatment windowed, per unit)
 #' It instruments the lagged outcome with earlier lags and returns only
-#' the beta coefficients for the included covariates (including the intercept).
+#' the beta coefficients for the included covariates.
+#' Treats any regressor named "Y_lag1" as endogenous and instruments it with
+#' lags Y_lag{min_iv_lag : max_iv_lag}. Other covariates are assumed exogenous.
 #'
 #' @param data A data.frame with panel structure.
 #' @param covariate_vars Character vector of exogenous covariate names.
@@ -103,7 +119,10 @@ fit_common_beta_ols <- function(data,
 #'
 #' @return A named vector of beta coefficients for the covariates and intercept.
 #' @export
+#' @keywords internal
+#'
 # IV pooled betas for covariates (return ONLY covariate coefficients)
+
 fit_common_beta_iv <- function(data,
                                outcome_var,
                                covariate_vars,
@@ -113,84 +132,145 @@ fit_common_beta_iv <- function(data,
                                min_iv_lag = 2,
                                max_iv_lag = 2,
                                degree = 0,
-                               pretreatment_window = c("full", "minimal")) {
+                               pretreatment_window = c("full", "minimal", "manual"),
+                               pretreatment_years = NULL) {
 
   pretreatment_window <- match.arg(pretreatment_window)
 
-  requireNamespace("dplyr", quietly = TRUE)
-  requireNamespace("AER", quietly = TRUE)
-
-  # Work on a copy
-  df <- data
-
-  # --- Create within-unit lags of the outcome (by unit, ordered by time) ---
-  df <- dplyr::group_by(df, .data[[unit_var]]) |>
-    dplyr::arrange(.data[[time_var]], .by_group = TRUE)
-
-  # Make sure at least lag 1 exists for the endogenous regressor
-  max_needed_lag <- max(1, max_iv_lag)
-  for (l in 1:max_needed_lag) {
-    lag_name <- paste0("lag", l, "_", outcome_var)
-    df[[lag_name]] <- dplyr::lag(df[[outcome_var]], n = l)
-  }
-  df <- dplyr::ungroup(df)
-
-  # Endogenous regressor: first lag of outcome
-  df$lagged_outcome <- df[[paste0("lag1_", outcome_var)]]
+  # --- Build a pooled pre-treatment frame using the per-unit window rule ---
+  build_pre_for_unit <- function(df_u) {
+    # Create requested outcome lags if needed (Y_lagk)
+    # If the user included "Y_lag1" in covariate_vars, we also need to construct "Y_lag{2..K}"
+    df_u <- df_u[order(df_u[[time_var]]), , drop = FALSE]
+    if ("Y_lag1" %in% covariate_vars || max_iv_lag >= 2) {
+      y <- df_u[[outcome_var]]
+      for (L in 1:max_iv_lag) {
+        df_u[[paste0("Y_lag", L)]] <- dplyr::lag(y, n = L)
+        # lag is over the unit, since df_u is per-unit already
+        y <- y # keep original y pointer
+      }
+    }
 
   # --- Define pre-treatment window (consistent with OLS version) ---
-  df <- dplyr::mutate(df, time_to_treat = .data[[time_var]] - .data[[treat_time_var]])
+  df_u$timeToTreat <- df_u[[time_var]] - df_u[[treat_time_var]]
+  pre_all <- df_u[df_u$timeToTreat < 0, , drop = FALSE]
 
-  if (pretreatment_window == "minimal") {
-    # use exactly the last `degree` pre-treatment years:  time_to_treat in [-degree, -1]
-    # if degree == 0, this yields an empty set; in that case, fall back to full (<0)
-    if (degree > 0) {
-      df <- dplyr::filter(df, time_to_treat < 0, time_to_treat >= -degree)
-    } else {
-      df <- dplyr::filter(df, time_to_treat < 0)
+  if (nrow(pre_all) == 0L) return (pre_all)
+
+  if (pretreatment_window == "full") {
+    pre_all[order(pre_all[[time_var]]), , drop = FALSE]
+
+  } else if (pretreatment_window == "minimal") {
+    need <- degree + 1L
+    ord <- order(pre_all[[time_var]], decreasing = TRUE)
+    take <- seq_len(min(need, length(ord)))
+    idx <- sort(ord[take], decreasing = FALSE)
+    pre_all[idx, , drop = FALSE]
+
+  } else { # manual
+    if (is.null(pretreatment_years) || !is.finite(pretreatment_years) || pretreatment_years < 1L) {
+      stop("When pretreatment_window = 'manual', provide a valid 'pretreatment_years' (>= 1).")
     }
+    need <- degree + 1L
+    if (pretreatment_years < need) {
+      stop(sprintf("pretreatment_years = %d is too small for degree q = %d (need at least q+1 = %d).",
+                   pretreatment_years, degree, need))
+    }
+    ord  <- order(pre_all[[time_var]], decreasing = TRUE)
+    take <- seq_len(min(as.integer(pretreatment_years), length(ord)))
+    idx  <- sort(ord[take], decreasing = FALSE)
+    pre_all[idx, , drop = FALSE]
+  }
+  }
+
+  units <- unique(data[[unit_var]])
+  pre_list <- lapply(units, function(u) build_pre_for_unit(data[data[[unit_var]] == u, , drop = FALSE]))
+  pre_pool <- do.call(rbind, pre_list)
+
+  if (is.null(pre_pool) || nrow(pre_pool) == 0L) {
+    stop("Pooled IV: no usable pre-treatment observations after windowing.")
+  }
+
+  # --- Define regressors and instruments ---
+  if (length(covariate_vars) == 0L) {
+    stop("Pooled IV requires at least one regressor in 'covariate_vars'.")
+  }
+
+  # Identify endogenous lag regressor(s) and construct instrument set
+  endog_vars <- intersect(covariate_vars, "Y_lag1")  # currently only treat Y_lag1 as endogenous
+  exog_vars  <- setdiff(covariate_vars, endog_vars)
+
+
+  # Ensure instrument lags exist if needed
+  inst_lags <- seq.int(min_iv_lag, max_iv_lag)
+  inst_vars <- character(0L)
+  if (length(endog_vars) > 0L) {
+    # Need Y_lag{min_iv_lag:max_iv_lag} in the data
+    need_cols <- paste0("Y_lag", inst_lags)
+    missing_iv_cols <- setdiff(need_cols, names(pre_pool))
+    if (length(missing_iv_cols) > 0L) {
+      stop("Pooled IV: required instrument columns missing: ", paste(missing_iv_cols, collapse = ", "),
+           ". Did you include the lagged outcome in 'covariate_vars' as 'Y_lag1'?")
+    }
+    inst_vars <- c(inst_vars, need_cols)
+  }
+
+  # Build model frames; drop rows with NAs in outcome, regressors, or instruments
+  rhs_vars <- c(endog_vars, exog_vars)
+  keep_cols <- unique(c(outcome_var, rhs_vars, inst_vars))
+  keep <- stats::complete.cases(pre_pool[, keep_cols, drop = FALSE])
+  pre_pool <- pre_pool[keep, , drop = FALSE]
+
+  # Identifiability after NA-drop from lags: if too few rows remain, fall back to OLS
+  k <- length(rhs_vars)
+
+  # Build RHS and instrument strings (used in both branches below)
+  rhs1 <- paste(rhs_vars, collapse = " + ")
+  rhs2 <- paste(c(inst_vars, exog_vars), collapse = " + ")
+
+  # Hard error if we have an endogenous regressor but literally no instruments constructed
+  if (length(inst_vars) == 0L && length(endog_vars) > 0L) {
+    stop("Pooled IV: endogenous regressor detected but no instruments were constructed.")
+  }
+
+  # If there are no endogenous vars at all, this path is just OLS
+  if (length(endog_vars) == 0L) {
+    # Ensure enough rows for OLS (intercept handled by lm)
+    if (nrow(pre_pool) <= k) {
+      stop(sprintf("Pooled OLS fallback: too few usable rows (%d) for %d regressors after NA removal.", nrow(pre_pool), k))
+    }
+    fml_ols <- stats::as.formula(paste(outcome_var, "~", rhs1))
+    fit <- stats::lm(fml_ols, data = pre_pool)
+
   } else {
-    # "full" = all pre-treatment years strictly before adoption
-    df <- dplyr::filter(df, time_to_treat < 0)
+    # We do have endogenous vars and instruments available
+    if (nrow(pre_pool) <= k) {
+      # Too tight after lag-NA removal → graceful fallback to OLS
+      warning(sprintf(
+        "Pooled IV: too few usable rows (%d) for %d regressors after lag-NA removal; falling back to pooled OLS.",
+        nrow(pre_pool), k
+      ), call. = FALSE)
+      fml_ols <- stats::as.formula(paste(outcome_var, "~", rhs1))
+      fit <- stats::lm(fml_ols, data = pre_pool)
+    } else {
+      # Proceed with IV
+      if (!requireNamespace("AER", quietly = TRUE)) {
+        stop("Package 'AER' is required for ivreg(). Please install it.")
+      }
+      fml_iv <- stats::as.formula(paste0(outcome_var, " ~ ", rhs1, " | ", rhs2))
+      fit <- AER::ivreg(fml_iv, data = pre_pool)
+    }
   }
 
-  # --- Build instrument set: lag(min_iv_lag) ... lag(max_iv_lag) of outcome
-  instruments <- paste0("lag", min_iv_lag:max_iv_lag, "_", outcome_var)
+  # Extract β for the covariates only (drop intercept)
+  beta <- stats::coef(fit)
+  beta <- beta[setdiff(names(beta), "(Intercept)")]
+  beta <- beta[covariate_vars]
 
-  # Variables required to be non-missing
-  needed <- c("lagged_outcome", instruments, covariate_vars, outcome_var)
-
-  # Keep complete cases
-  if (!all(needed %in% names(df))) {
-    missing_cols <- setdiff(needed, names(df))
-    stop("IV beta: missing required columns: ", paste(missing_cols, collapse = ", "))
-  }
-  df <- df[stats::complete.cases(df[, needed]), ]
-
-  # Guardrails: enough rows?
-  if (nrow(df) == 0) {
-    stop("IV beta: 0 (non-NA) cases after filtering to pre-treatment window and complete cases.")
+  if (any(!is.finite(beta))) {
+    stop("Pooled IV/OLS: non-finite coefficient(s). Widen pre window, add instruments, or reduce multicollinearity.")
   }
 
-  # --- Build IV formula ---
-  # Structural RHS includes intercept + lagged_outcome + covariates
-  rhs_str     <- paste(c("1", "lagged_outcome", covariate_vars), collapse = " + ")
-  rhs_instr   <- paste(c(instruments, covariate_vars), collapse = " + ")
-  iv_formula  <- stats::as.formula(paste0(outcome_var, " ~ ", rhs_str, " | ", rhs_instr))
 
-  # --- Estimate IV ---
-  iv_model <- AER::ivreg(iv_formula, data = df)
-
-  # Return ONLY covariate coefficients (no intercept, no endogenous regressor)
-  bhat <- stats::coef(iv_model)
-  keep <- covariate_vars
-  bhat_cov <- bhat[keep]
-
-  # Safety check: names + length
-  if (any(is.na(bhat_cov)) || length(bhat_cov) != length(covariate_vars)) {
-    stop("IV beta: could not recover covariate coefficients cleanly. ",
-         "Check instrument strength / sample size.")
-  }
-
-  return(bhat_cov)
+  return(beta)
 }
