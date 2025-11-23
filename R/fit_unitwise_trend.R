@@ -8,6 +8,7 @@
 #'
 #' This approach allows for heterogeneous covariate effects across units.
 #'
+#'
 #' @param data The full dataset (data frame).
 #' @param unit A single unit (e.g. state or municipality) to subset on.
 #' @param degree Degree of the polynomial (e.g. 0, 1, 2).
@@ -16,16 +17,13 @@
 #' @param outcome_var Name of the outcome variable to predict (string).
 #' @param treat_time_var Name of the treatment time variable (string).
 #' @param covariate_vars Optional character vector of covariate names.
-#' @param beta_hat Optional named vector of pooled covariate coefficients.
-#' @param forecast_lag Number of periods to wait after treatment before forecasting begins.
-#'        Default is 0 (forecast starts in treatment year).
-#' @param pretreatment_window Character. Either:
-#'   "full" = use all pre-treatment observations; or
-#'   "minimal" = use exactly degree+1+p most recent pre-treatment periods,
-#'   where p = length(covariate_vars). Ensures just-identified unitwise fit.
+#' @param beta_hat Optional pooled coefficients (ignored in unitwise; kept for signature parity).
+#' @param forecast_offset Integer; first forecast period is τ + forecast_offset.
+#' @param pretreatment_window "full", "minimal", or "manual".
+#' @param pretreatment_years If "manual", use the last K pre-treatment years (K ≥ q+1+p).
+#' @param hh Horizon length: predict for t ∈ [τ+offset, τ+offset+hh−1].
 #'
-#' @return A data frame with unit, time, outcome, predicted values (`preds`),
-#'         and treatment time.
+#' @return Data frame with: unit, time, outcome, preds, treat_time, timeToTreat, hh, n_pre_fit, pre_years_used.
 #' @export
 fit_unitwise_trend <- function(data,
                                unit,
@@ -37,8 +35,10 @@ fit_unitwise_trend <- function(data,
                                hh,
                                covariate_vars = NULL,
                                beta_hat = NULL,          # ignored in unitwise; kept for signature parity
-                               forecast_lag = 0,
-                               pretreatment_window = c("full", "minimal")) {
+                               forecast_offset = 0,
+                               pretreatment_window = c("full", "minimal", "manual"),
+                               pretreatment_years = NULL) {
+
   pretreatment_window <- match.arg(pretreatment_window)
 
   # Warn if a pooled beta_hat was (accidentally) passed
@@ -52,6 +52,9 @@ fit_unitwise_trend <- function(data,
   # Ensure numeric
   unit_data[[time_var]]       <- as.numeric(as.character(unit_data[[time_var]]))
   unit_data[[treat_time_var]] <- as.numeric(as.character(unit_data[[treat_time_var]]))
+  if (any(is.na(unit_data[[time_var]])) || any(is.na(unit_data[[treat_time_var]]))) {
+    stop(sprintf("Invalid %s or %s for unit: %s", time_var, treat_time_var, unit))
+  }
 
   # time-to-treatment and polynomial terms
   unit_data$timeToTreat <- unit_data[[time_var]] - unit_data[[treat_time_var]]
@@ -60,80 +63,108 @@ fit_unitwise_trend <- function(data,
       unit_data[[paste0("ttreat", d)]] <- unit_data$timeToTreat^d
     }
   }
-
+  # ---------------------------------------------------------------------------
   # Choose pre-treatment window
-  pre_data <- subset(unit_data, timeToTreat < 0)
+  pre_all <- unit_data[unit_data$timeToTreat < 0 & !is.na(unit_data[[outcome_var]]), , drop = FALSE]
 
-  if (pretreatment_window == "minimal") {
-    # number of covariates
-    p <- if (is.null(covariate_vars)) 0L else length(covariate_vars)
-    # minimum rows needed: intercept + polynomial terms + covariates
-    # In "minimal" mode we take the (degree + 1) most recent pre-treatment times. But the unitwise model has (degree + 1 + p) free parameters (intercept + degree polynomial + p = length(covariate_vars) unit-specific β’s). Therefore:
-    required_n <- (degree + 1L) + p
-
-    # take the required_n most recent DISTINCT pre-treatment times
-    distinct_t <- sort(unique(pre_data$timeToTreat), decreasing = TRUE)
-    keep_t     <- head(distinct_t, required_n)
-
-    pre_data   <- pre_data[pre_data$timeToTreat %in% keep_t, , drop = FALSE]
+  if (nrow(pre_all) == 0L) {
+    # Return skeleton with required columns (no fit possible)
+    out <- unit_data[, c(unit_var, time_var, outcome_var, treat_time_var), drop = FALSE]
+    out$timeToTreat     <- unit_data$timeToTreat
+    out$preds           <- NA_real_
+    out$hh              <- 0L
+    out$n_pre_fit       <- 0L
+    out$pre_years_used  <- ""
+    return(out)
   }
+
+  # Identification checks: Number of unitwise parameters = intercept(1) + q polynomial terms + p covariates
+  p_cov <- if (is.null(covariate_vars)) 0L else length(covariate_vars)
+  required_n <- (degree + 1L) + p_cov
+
+  if (pretreatment_window == "full") {
+    pre_data <- pre_all[order(pre_all[[time_var]]), , drop = FALSE]
+
+  } else if (pretreatment_window == "minimal") {
+    # Take the last required_n DISTINCT pre-treatment periods
+    distinct_t <- sort(unique(pre_all$timeToTreat), decreasing = TRUE)
+    keep_t     <- head(distinct_t, required_n)
+    pre_data   <- pre_all[pre_all$timeToTreat %in% keep_t, , drop = FALSE]
+    # Keep chronological order
+    pre_data   <- pre_data[order(pre_data[[time_var]]), , drop = FALSE]
+
+  } else { # "manual"
+    if (is.null(pretreatment_years) || !is.finite(pretreatment_years) || pretreatment_years < 1L) {
+      stop("When pretreatment_window = 'manual', provide a valid 'pretreatment_years' (>= 1).")
+    }
+    if (pretreatment_years < required_n) {
+      stop(sprintf("pretreatment_years = %d is too small for unitwise degree q = %d with %d covariate(s) (need at least q+1+p = %d).",
+                   pretreatment_years, degree, p_cov, required_n))
+    }
+    # Take the last K DISTINCT pre periods (closest to treatment)
+    distinct_t <- sort(unique(pre_all$timeToTreat), decreasing = TRUE)
+    keep_t     <- head(distinct_t, as.integer(pretreatment_years))
+    pre_data   <- pre_all[pre_all$timeToTreat %in% keep_t, , drop = FALSE]
+    pre_data   <- pre_data[order(pre_data[[time_var]]), , drop = FALSE]
+  }
+  # ---------------------------------------------------------------------------
 
   # Diagnostics
   n_pre_fit       <- nrow(pre_data)
   pre_years_used  <- paste(sort(unique(pre_data$timeToTreat)), collapse = ",")
 
-  # Identification checks
-  p <- if (is.null(covariate_vars)) 0L else length(covariate_vars)
-  required_n <- (degree + 1L) + p
 
   if (n_pre_fit < required_n || dplyr::n_distinct(pre_data$timeToTreat) < (degree + 1L)) {
     warning(paste("Skipping unit:", unit,
                   "due to insufficient pre-treatment observations (need at least",
                   required_n, "rows and", degree + 1L, "distinct time points)."))
-    return(
-      dplyr::mutate(
-        unit_data[, c(unit_var, time_var, outcome_var, treat_time_var), drop = FALSE],
-        timeToTreat    = unit_data[[time_var]] - unit_data[[treat_time_var]],
-        preds          = NA_real_,
-        hh             = 0L,
-        deg            = degree,
-        skipped        = TRUE,
-        n_pre_fit      = n_pre_fit,
-        pre_years_used = pre_years_used
-      )
-    )
+    out <- unit_data[, c(unit_var, time_var, outcome_var, treat_time_var), drop = FALSE]
+    out$timeToTreat    = unit_data$timeToTreat
+    out$preds          = NA_real_
+    out$hh             = 0L
+    out$deg            = degree
+    out$n_pre_fit      = n_pre_fit
+    out$pre_years_used = pre_years_used
+    return(out)
+  }
+  if (n_pre_fit == required_n) {
+    warning(sprintf("Saturated fit for unit %s at q = %d with %d covariate(s): usable pre rows = q+1+p = %d. This will result in a perfect fit with zero degrees of freedom, and the forecasts may be unstable.",
+                    unit, degree, p_cov, required_n), call. = FALSE)
   }
 
   # Build RHS: intercept + polynomial terms + covariates
-  poly_terms <- if (degree > 0) paste0("ttreat", 1:degree) else NULL
-  rhs_terms  <- c(poly_terms, covariate_vars)
+  poly_terms <- if (degree > 0) paste0("ttreat", 1:degree) else character(0)
+  rhs_terms  <- c(poly_terms, if (!is.null(covariate_vars)) covariate_vars else character(0))
+
   # If there are no rhs terms (degree==0 & no covariates), keep intercept-only
   fml <- if (length(rhs_terms) > 0) {
-    as.formula(paste(outcome_var, "~", paste(rhs_terms, collapse = " + ")))
+    stats::as.formula(paste(outcome_var, "~", paste(rhs_terms, collapse = " + ")))
   } else {
-    as.formula(paste(outcome_var, "~ 1"))
+    stats::as.formula(paste(outcome_var, "~ 1"))
   }
 
-  # Fit on pre-treatment
-  model <- lm(fml, data = pre_data)
+  model <- stats::lm(fml, data = pre_data)
+
   # Optional: print summary for debugging
   # print(summary(model))
 
-  # Predict ONLY within the forecast horizon [forecast_lag, forecast_lag+hh-1]
-  post_data <- subset(unit_data,
-                      timeToTreat >= forecast_lag &
-                        timeToTreat <= forecast_lag + hh - 1)
+  # Predict only over the requested horizon block [τ+forecast_offset, τ+forecast_offset+hh-1]
+  post_data <- unit_data[
+    unit_data$timeToTreat >= forecast_offset &
+      unit_data$timeToTreat <= forecast_offset + hh - 1L,
+    , drop = FALSE
+  ]
 
   unit_data$preds <- NA_real_
-  if (nrow(post_data) > 0) {
+  if (nrow(post_data) > 0L) {
     unit_data$preds[unit_data$timeToTreat %in% post_data$timeToTreat] <-
-      predict(model, newdata = post_data)
+      stats::predict(model, newdata = post_data)
   }
 
   # hh index for plotting (keep all rows; pre gets 0)
   unit_data$hh <- dplyr::if_else(
-    unit_data$timeToTreat >= forecast_lag & unit_data$timeToTreat <= forecast_lag + hh - 1,
-    unit_data$timeToTreat - forecast_lag + 1L,
+    unit_data$timeToTreat >= forecast_offset & unit_data$timeToTreat <= forecast_offset + hh - 1,
+    unit_data$timeToTreat - forecast_offset + 1L,
     0L
   )
 
