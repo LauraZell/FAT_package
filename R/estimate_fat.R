@@ -14,6 +14,9 @@
 #' @param degrees Vector of polynomial degrees for trend fitting (e.g., 0:2).
 #' @param horizons Vector of forecast horizons to estimate (e.g., 1:5).
 #' @param se_method Method for standard errors: "analytic", "bootstrap", "clustered", "unitwise".
+#' Note: when dynamic parameters are estimated via pooled IV (e.g., beta_estimator = "iv"
+#'   with lagged outcome among covariates), analytic SEs are not available and will be
+#'   automatically switched to "bootstrap" with a warning.
 #' @param n_bootstrap Number of bootstrap repetitions (only if `se_method` is "bootstrap").
 #' @param covariate_vars Optional vector of column names to include as covariates.
 #' @param beta_estimator Pooled beta estimation method: "none", "ols", "iv", or "unitwise".
@@ -21,7 +24,7 @@
 #' @param max_iv_lag Maximum lag for IV estimation (if used).
 #' @param control_group_value Optional. If set (e.g., control_group_value = FALSE), DFAT mode is activated.
 #'                            Treated units are expected to be marked in a "treated" column (TRUE/FALSE).
-#' @param forecast_lag Number of periods to wait after treatment before forecasting begins.
+#' @param forecast_offset Number of periods to wait after treatment before forecasting begins.
 #'        Default is 0 (forecast starts in treatment year).
 #' @param pretreatment_window Character. Defines how much pre-treatment data to use for trend fitting:
 #'                            "full" uses all pre-treatment years (`timeToTreat < 0`);
@@ -51,14 +54,57 @@ estimate_fat <- function(data,
                          min_iv_lag = 2,
                          max_iv_lag = 2,
                          control_group_value = NULL,
-                         forecast_lag = 1,
-                         pretreatment_window = c("full", "minimal")) {
+                         forecast_offset = 1,
+                         pretreatment_window = c("full", "minimal", "manual"),
+                         pretreatment_years = NULL) {
   pretreatment_window <- match.arg(pretreatment_window)
-
-  # Match estimator option
   beta_estimator <- match.arg(beta_estimator)
 
-  # --- argument validation for covariates vs estimator ---
+  # SE guardrails for model-based / IV paths
+  # If pooled IV is used and the lagged outcome is among covariates (e.g., "Y_lag1"),
+  # we treat this as a "dynamic parameter estimated" case (rho-like). In this case,
+  # analytic SE for FAT is not available; we force bootstrap with a warning.
+  is_dynamic_iv <- (beta_estimator == "iv") &&
+    !is.null(covariate_vars) &&
+    any(covariate_vars %in% c("Y_lag1"))
+
+  if (is_dynamic_iv && identical(se_method, "analytic")) {
+    warning(
+      paste0(
+        "se_method='analytic' is not available when beta_estimator='iv' ",
+        "with lagged outcome among covariates (dynamic parameter estimated). ",
+        "Switching to se_method='bootstrap'."
+      ),
+      call. = FALSE
+    )
+    se_method <- "bootstrap"
+    # bump bootstrap reps if user left the default very low
+    if (is.null(n_bootstrap) || !is.finite(n_bootstrap) || n_bootstrap < 199L) {
+      n_bootstrap <- max(499L, as.integer(n_bootstrap %||% 0L))
+    }
+  }
+
+  # Also prevent "unitwise" + analytic in DFAT with tiny N (optional, conservative):
+  if (!is.null(control_group_value) && beta_estimator == "unitwise" && identical(se_method, "analytic")) {
+    # keep analytic allowed, but warn if too few units (no robust CLT)
+    n_units <- dplyr::n_distinct(data[[unit_var]])
+    if (n_units < 25L) {
+      warning("DFAT + unitwise + se_method='analytic' with <25 units may be anti-conservative. Consider 'bootstrap'.", call. = FALSE)
+    }
+  }
+
+
+  # Validate manual mode
+  if (pretreatment_window == "manual") {
+    if (is.null(pretreatment_years) || length(pretreatment_years) != 1L || !is.finite(pretreatment_years)) {
+      stop("When pretreatment_window = 'manual', provide a single numeric 'pretreatment_years' value.")
+    }
+    if (pretreatment_years < 1L) {
+      stop("'pretreatment_years' must be at least 1.")
+    }
+  }
+
+  # Argument validation for covariates vs estimator
   # Ensure covariate_vars is a proper character vector when needed
   is_missing_covars <- is.null(covariate_vars) || length(covariate_vars) == 0
 
@@ -121,15 +167,71 @@ estimate_fat <- function(data,
   } else {
     data$treat_time_for_fit <- data[[treat_time_var]]
   }
-
   # Create time-to-treatment variable (centered time)
   data <- dplyr::mutate(data, timeToTreat = as.numeric(.data[[time_var]]) - .data$treat_time_for_fit)
 
-  # Internal function to estimate FAT/DFAT for given (degree, horizon)
+
+  # Helper: choose which pre-treatment rows to use for a given unit & degree
+  .select_pre_rows <- function(df_unit, deg, window, k_years) {
+    pre <- df_unit[df_unit$timeToTreat < 0 & !is.na(df_unit[[outcome_var]]), , drop = FALSE]
+    if (nrow(pre) == 0L) return(pre)
+
+    if (window == "full") {
+      return(pre[order(pre[[time_var]]), , drop = FALSE])
+    }
+    if (window == "minimal") {
+      need <- deg + 1L
+      idx <- order(pre[[time_var]], decreasing = TRUE)[seq_len(min(need, nrow(pre)))]
+      return(pre[sort(idx, decreasing = FALSE), , drop = FALSE])
+    }
+    # manual
+    need <- deg + 1L
+    if (k_years < need) {
+      stop(sprintf("pretreatment_years = %d is too small for degree q = %d (need at least q+1 = %d).",
+                   k_years, deg, need))
+    }
+    take <- min(k_years, nrow(pre))
+    idx <- order(pre[[time_var]], decreasing = TRUE)[seq_len(take)]
+    pre[sort(idx, decreasing = FALSE), , drop = FALSE]
+  }
+
+  # Internal function to estimate FAT/DFAT with specified degree and horizon
   fat_for_combo <- function(deg, hh) {
-    beta_hat <- NULL
+
+    # Saturation/identifiability check per unit, using chosen pretreatment window
+    required_params <- deg + 1L
+
+    pre_counts <- data %>%
+      dplyr::group_by(.data[[unit_var]]) %>%
+      dplyr::group_modify(~{
+        pre_use <- .select_pre_rows(.x, deg, pretreatment_window, pretreatment_years)
+        tibble::tibble(n_pre = nrow(pre_use))
+      }) %>%
+      dplyr::ungroup() %>%
+      dplyr::rename(.unit = !!rlang::sym(unit_var))
+
+    if (nrow(pre_counts) == 0L) {
+      stop("No units present after initial filtering.")
+    }
+
+    too_few <- pre_counts %>% dplyr::filter(n_pre < required_params)
+    if (nrow(too_few) > 0L) {
+      ex <- paste(utils::head(too_few$.unit, 5L), collapese = ", ")
+      stop(sprintf(
+        "Cannot fit q = %d: some units have fewer than q+1 = %d usable pretreatment rows under '%s' window. Examples: %s",
+        deg, required_params, pretreatment_window, ex))
+    }
+
+    exactly_equal <- pre_counts %>% dplyr::filter(n_pre == required_params)
+    if (nrow(exactly_equal) > 0L) {
+      ex <- paste(utils::head(exactly_equal$.unit, 5L), collapse = ", ")
+      warning(sprintf(
+        "Saturated at q = %d for some units: usable pretreatment rows equal q + 1 = %d under '%s'. Forecasts may be unstable. Examples: %s",
+        deg, required_params, pretreatment_window, ex), call. = FALSE)
+    }
 
     # If covariates + pooled estimation selected, compute beta
+    beta_hat <- NULL
     if (!is.null(covariate_vars) && beta_estimator != "none") {
       if (beta_estimator == "ols") {
         beta_hat <- fit_common_beta_ols(data = data,
@@ -139,7 +241,8 @@ estimate_fat <- function(data,
                                         time_var = time_var,
                                         unit_var = unit_var,
                                         degree = deg,
-                                        pretreatment_window = pretreatment_window)
+                                        pretreatment_window = pretreatment_window,
+                                        pretreatment_years = pretreatment_years)
 
       } else if (beta_estimator == "iv") {
         beta_hat <- fit_common_beta_iv(data          = data,
@@ -151,7 +254,8 @@ estimate_fat <- function(data,
                                        degree        = deg,
                                        min_iv_lag    = min_iv_lag,
                                        max_iv_lag    = max_iv_lag,
-                                       pretreatment_window = pretreatment_window)
+                                       pretreatment_window = pretreatment_window,
+                                       pretreatment_years = pretreatment_years)
       }
     }
 
@@ -175,8 +279,9 @@ estimate_fat <- function(data,
             treat_time_var = "treat_time_for_fit",
             covariate_vars = covariate_vars,
             beta_hat = NULL,
-            forecast_lag = forecast_lag,
+            forecast_offset = forecast_offset,
             pretreatment_window = pretreatment_window,
+            pretreatment_years = pretreatment_years,
             hh = hh
           )
         } else {
@@ -190,8 +295,9 @@ estimate_fat <- function(data,
             treat_time_var = "treat_time_for_fit",
             covariate_vars = covariate_vars,
             beta_hat = beta_hat,
-            forecast_lag = forecast_lag,
+            forecast_offset = forecast_offset,
             pretreatment_window = pretreatment_window,
+            pretreatment_years = pretreatment_years,
             hh = hh
           )
         }
@@ -251,7 +357,7 @@ estimate_fat <- function(data,
     }
 
     # Target rows for FAT at the specified horizon only
-    # Pick the single forecast step 'hh' (i.e., timeToTreat == forecast_lag + hh - 1)
+    # Pick the single forecast step 'hh' (i.e., timeToTreat == forecast_offset + hh - 1)
     .h <- hh  # avoid NSE name collision
     target_data <- all_preds %>%
       dplyr::filter(.data$hh == .h) %>%
