@@ -21,7 +21,8 @@ estimate_fat(
   max_iv_lag = 2,
   control_group_value = NULL,
   forecast_lag = 1,
-  pretreatment_window = c("full", "minimal")
+  pretreatment_window = c("full", "minimal", "manual"),
+  pretreatment_years = NULL
 )
 }
 \arguments{
